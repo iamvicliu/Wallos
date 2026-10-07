@@ -199,9 +199,9 @@ $potentialMonthlySavings = get_upcoming_cancellations_monthly_value($upcomingCan
 
   $showAnyGraph = $showCategoryCostGraph || $showMemberCostGraph || $showPaymentMethodsGraph || $showTotalMonthlyCostGraph
     || ($showMonthlyStats && $showVsMonthlyBudgetGraph) || ($showPeriodStats && $showVsPeriodBudgetGraph)
-    || $showProjectionGraph || $showLifetimeGraph || $showCycleGraph || $showCurrencyGraph || $showHistogramGraph || $showYearlyNewGraph;
+    || $showProjectionGraph || $showLifetimeGraph || $showCycleGraph || $showCurrencyGraph || $showHistogramGraph || $showYearlyNewGraph || $showMonthlyForecastGraph;
 
-  $showTrendsSection = $showTotalMonthlyCostGraph || $showProjectionGraph || $monthOverMonthDelta !== null;
+  $showTrendsSection = $showTotalMonthlyCostGraph || $showProjectionGraph || $monthOverMonthDelta !== null || $showMonthlyForecastGraph;
   $showBudgetSection = ($showMonthlyStats && (isset($monthlyBudgetUsed) || isset($monthlyBudgetLeft) || isset($monthlyOverBudgetAmount) || $showVsMonthlyBudgetGraph))
     || ($showPeriodStats && (isset($periodBudgetUsed) || isset($periodBudgetLeft) || isset($periodOverBudgetAmount) || $showVsPeriodBudgetGraph));
   $showSplitSection = $showMemberCostGraph || $showCategoryCostGraph || $showPaymentMethodsGraph || $showCycleGraph || $showCurrencyGraph || $showHistogramGraph;
@@ -345,7 +345,7 @@ $potentialMonthlySavings = get_upcoming_cancellations_monthly_value($upcomingCan
         </div>
         <?php
       }
-      if ($showTotalMonthlyCostGraph || $showProjectionGraph) {
+      if ($showTotalMonthlyCostGraph || $showProjectionGraph || $showMonthlyForecastGraph) {
         ?>
         <div class="graphs">
           <?php
@@ -357,6 +357,17 @@ $potentialMonthlySavings = get_upcoming_cancellations_monthly_value($upcomingCan
                 <div class="sub-header">(<?= translate('monthly_cost', $i18n) ?>)</div>
               </header>
               <div id="totalMonthlyCostChart" style="width: 100%;"></div>
+            </section>
+            <?php
+          }
+          if ($showMonthlyForecastGraph) {
+            ?>
+            <section class="graph x2">
+              <header>
+                <?= translate('monthly_payment_forecast', $i18n) ?>
+                <div class="sub-header">(<?= translate('next_12_months', $i18n) ?>)</div>
+              </header>
+              <div id="monthlyForecastChart" style="width: 100%;"></div>
             </section>
             <?php
           }
@@ -696,6 +707,7 @@ if ($showAnyGraph) {
   <script type="text/javascript">
     window.onload = function () {
       loadLineGraph("totalMonthlyCostChart", <?php echo json_encode($totalMonthlyCostDataPoints, JSON_NUMERIC_CHECK); ?>, "<?= $code ?>", <?= $showTotalMonthlyCostGraph ? 1 : 0 ?>);
+      loadLineGraph("monthlyForecastChart", <?php echo json_encode($monthlyForecastDataPoints, JSON_NUMERIC_CHECK); ?>, "<?= $code ?>", <?= $showMonthlyForecastGraph ? 1 : 0 ?>);
       loadBarGraph("projectionChart", <?php echo json_encode($projectionDataPoints, JSON_NUMERIC_CHECK); ?>, "<?= $code ?>", <?= $showProjectionGraph ? 1 : 0 ?>, <?= isset($budget) && $budget > 0 ? $budget : 'null' ?>);
       loadGraph("categorySplitChart", <?php echo json_encode($categoryDataPoints, JSON_NUMERIC_CHECK); ?>, "<?= $code ?>", <?= $showCategoryCostGraph ? 1 : 0 ?>);
       loadGraph("memberSplitChart", <?php echo json_encode($memberDataPoints, JSON_NUMERIC_CHECK); ?>, "<?= $code ?>", <?= $showMemberCostGraph ? 1 : 0 ?>);
