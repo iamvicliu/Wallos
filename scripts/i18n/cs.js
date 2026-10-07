@@ -46,4 +46,12 @@ let i18n = {
   payment_method: "Platební metoda",
   notes: "Poznámky",
   export: "Exportovat",
+  invalid_budget: "Rozpočet musí být nezáporné číslo",
+  invalid_budget_period: "Vybrané rozpočtové období je neplatné",
+  invalid_budget_anchor_date: "Počáteční datum musí být platné datum",
+  no_results_found: "Nebyly nalezeny žádné výsledky",
+  push_not_supported: "Push notifikace nejsou v tomto prohlížeči podporovány.",
+  push_permission_denied: "Oprávnění k oznámením nebylo uděleno.",
+  delete: "Odstranit",
+  no_devices_registered: "Zatím nejsou registrována žádná zařízení.",
 }

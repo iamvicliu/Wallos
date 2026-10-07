@@ -53,16 +53,34 @@ if (isset($_GET['email']) && isset($_GET['token'])) {
     $row = $result->fetchArray(SQLITE3_ASSOC);
 
     if ($row) {
+        // Removing the row *is* the verification: an account counts as verified
+        // when it no longer has one. The result was discarded and the redirect
+        // to login.php?validated=true happened either way, so a delete that did
+        // not run told the person their address was confirmed while the login
+        // went on refusing them, with nothing anywhere saying why. The token
+        // also stayed usable, where it should have been spent.
         $query = "DELETE FROM email_verification WHERE email = :email AND token = :token";
         $stmt = $db->prepare($query);
-        $stmt->bindValue(':email', $email, SQLITE3_TEXT);
-        $stmt->bindValue(':token', $token, SQLITE3_TEXT);
-        $stmt->execute();
+        $verified = false;
 
-        $validated = true;
+        if ($stmt !== false) {
+            $stmt->bindValue(':email', $email, SQLITE3_TEXT);
+            $stmt->bindValue(':token', $token, SQLITE3_TEXT);
+            $verified = $stmt->execute() !== false;
+        }
 
-        header("Location: login.php?validated=true");
-        exit;
+        if ($verified) {
+            $validated = true;
+
+            header("Location: login.php?validated=true");
+            exit;
+        }
+
+        // Not verified, so this falls through to the page below, which already
+        // renders email_verification_failed while $validated is false. No new
+        // message, and no redirect to a page that has nothing to say about it.
+        error_log('Wallos verifyemail: could not consume the verification token for '
+            . $email . ', so the account stays unverified: ' . $db->lastErrorMsg());
 
     } else {
         $query = "SELECT require_email_verification FROM admin";
@@ -84,14 +102,14 @@ if (isset($_GET['email']) && isset($_GET['token'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#222222" ?>" />
+    <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#12151C" ?>" />
     <meta name="apple-mobile-web-app-title" content="Wallos">
     <title>Wallos - Subscription Tracker</title>
     <link rel="icon" type="image/png" href="images/icon/favicon.ico" sizes="16x16">
     <link rel="apple-touch-icon" href="images/icon/apple-touch-icon.png">
     <link rel="apple-touch-icon" sizes="152x152" href="images/icon/apple-touch-icon-152.png">
     <link rel="apple-touch-icon" sizes="180x180" href="images/icon/apple-touch-icon-180.png">
-    <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="manifest.php">
     <link rel="stylesheet" href="styles/theme.css?<?= $version ?>">
     <link rel="stylesheet" href="styles/login.css?<?= $version ?>">
     <link rel="stylesheet" href="styles/themes/red.css?<?= $version ?>" id="red-theme" <?= $colorTheme != "red" ? "disabled" : "" ?>>
@@ -101,10 +119,25 @@ if (isset($_GET['email']) && isset($_GET['token'])) {
     <link rel="stylesheet" href="styles/font-awesome.min.css">
     <link rel="stylesheet" href="styles/barlow.css">
     <link rel="stylesheet" href="styles/login-dark-theme.css?<?= $version ?>" id="dark-theme" <?= $theme == "light" ? "disabled" : "" ?>>
+    <script type="text/javascript" src="scripts/auth-theme.js?<?= $version ?>"></script>
 </head>
 
 <body class="<?= $languages[$lang]['dir'] ?>">
-    <div class="content">
+    <button type="button" class="theme-toggle" id="theme-toggle" title="<?= translate('theme', $i18n) ?>"
+        aria-label="<?= translate('theme', $i18n) ?>">
+        <i class="fa-solid <?= $theme == "dark" ? "fa-sun" : "fa-moon" ?>"></i>
+    </button>
+    <div class="content auth-split">
+        <aside class="auth-brand" aria-hidden="true">
+            <div class="auth-brand-logo">
+                <?php include "images/siteicons/svg/logo.php"; ?>
+            </div>
+            <div class="auth-brand-text">
+                <h1><?= translate('auth_tagline', $i18n) ?></h1>
+                <p><?= translate('auth_tagline_sub', $i18n) ?></p>
+            </div>
+            <div class="auth-brand-footer">Wallos &mdash; Subscription Tracker</div>
+        </aside>
         <section class="container">
             <header>
                 <div class="logo-image" title="Wallos - Subscription Tracker">
@@ -131,4 +164,4 @@ if (isset($_GET['email']) && isset($_GET['token'])) {
     </div>
 </body>
 
-</html>
+</html>

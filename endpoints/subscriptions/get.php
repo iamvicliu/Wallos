@@ -3,6 +3,7 @@ require_once '../../includes/connect_endpoint.php';
 
 require_once '../../includes/currency_formatter.php';
 require_once '../../includes/getdbkeys.php';
+require_once '../../includes/logo_theme_variant.php';
 
 include_once '../../includes/list_subscriptions.php';
 
@@ -103,9 +104,11 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
       if ($type === 'reminder') {
         $notifConditions[] = "notify = 1";
       } elseif ($type === 'cancellation') {
-        $notifConditions[] = "(cancellation_date IS NOT NULL AND cancellation_date != '')";
+        // One-time purchases are never treated as cancellable, matching the
+        // dashboard, statistics page and cancellation notification cron.
+        $notifConditions[] = "(cancellation_date IS NOT NULL AND cancellation_date != '' AND cycle != 5)";
       } elseif ($type === 'none') {
-        $notifConditions[] = "(notify = 0 AND (cancellation_date IS NULL OR cancellation_date = ''))";
+        $notifConditions[] = "(notify = 0 AND (cancellation_date IS NULL OR cancellation_date = '' OR cycle = 5))";
       }
     }
     if (!empty($notifConditions)) {
@@ -178,6 +181,8 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
     $id = $subscription['id'];
     $print[$id]['id'] = $id;
     $print[$id]['logo'] = $subscription['logo'] != "" ? "images/uploads/logos/" . $subscription['logo'] : "";
+    $print[$id]['logo_text_color'] = $subscription['logo_text_color'] ?? null;
+    $print[$id]['logo_variant'] = !empty($subscription['logo_variant']) ? "images/uploads/logos/" . $subscription['logo_variant'] : null;
     $print[$id]['name'] = $subscription['name'] ?? "";
     $cycle = $subscription['cycle'];
     $frequency = $subscription['frequency'];
@@ -258,6 +263,11 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
     </div>
     <?php
   }
+} else {
+  http_response_code(401);
+  ?>
+  <p class="no-matching-subscriptions"><?= translate('session_expired', $i18n) ?></p>
+  <?php
 }
 
 $db->close();

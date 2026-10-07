@@ -46,4 +46,12 @@ let i18n = {
   payment_method: "Método de pagamento",
   notes: "Notas",
   export: "Exportar",
+  invalid_budget: "O orçamento deve ser um número não negativo",
+  invalid_budget_period: "Período de orçamento selecionado inválido",
+  invalid_budget_anchor_date: "A data de referência deve ser uma data válida",
+  no_results_found: "Nenhum resultado encontrado",
+  push_not_supported: "As notificações push não são compatíveis com este navegador.",
+  push_permission_denied: "A permissão de notificações não foi concedida.",
+  delete: "Excluir",
+  no_devices_registered: "Nenhum dispositivo registrado ainda.",
 }

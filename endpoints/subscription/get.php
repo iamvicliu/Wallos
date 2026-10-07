@@ -1,5 +1,6 @@
 <?php
 require_once '../../includes/connect_endpoint.php';
+require_once '../../includes/markdown.php';
 
 if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
     if (isset($_GET['id']) && $_GET['id'] != "") {
@@ -16,6 +17,8 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
             $subscriptionData['id'] = $subscriptionId;
             $subscriptionData['name'] = htmlspecialchars_decode($row['name'] ?? "");
             $subscriptionData['logo'] = $row['logo'];
+            $subscriptionData['logo_text_color'] = $row['logo_text_color'];
+            $subscriptionData['logo_variant'] = $row['logo_variant'];
             $subscriptionData['price'] = $row['price'];
             $subscriptionData['currency_id'] = $row['currency_id'];
             $subscriptionData['auto_renew'] = $row['auto_renew'];
@@ -23,7 +26,8 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
             $subscriptionData['next_payment'] = $row['next_payment'];
             $subscriptionData['frequency'] = $row['frequency'];
             $subscriptionData['cycle'] = $row['cycle'];
-            $subscriptionData['notes'] = htmlspecialchars_decode($row['notes'] ?? "");
+            $subscriptionData['notes'] = $row['notes'] ?? "";
+            $subscriptionData['notes_html'] = render_notes_markdown($row['notes'] ?? "");
             $subscriptionData['payment_method_id'] = $row['payment_method_id'];
             $subscriptionData['payer_user_id'] = $row['payer_user_id'];
             $subscriptionData['category_id'] = $row['category_id'];
@@ -43,6 +47,10 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
     } else {
         echo translate('error', $i18n);
     }
+} else {
+    http_response_code(401);
+    header('Content-Type: application/json');
+    echo json_encode(['error' => translate('session_expired', $i18n)]);
 }
 $db->close();
 ?>

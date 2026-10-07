@@ -2,6 +2,7 @@
 
 require_once 'includes/header.php';
 require_once 'includes/getdbkeys.php';
+require_once 'includes/logo_theme_variant.php';
 
 include_once 'includes/list_subscriptions.php';
 
@@ -146,6 +147,8 @@ if ($sortOrder == "payment_method_id") {
 }
 
 $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden";
+
+$subscriptionsView = (isset($_COOKIE['subscriptionsView']) && $_COOKIE['subscriptionsView'] === 'grid') ? 'grid' : 'list';
 ?>
 <style>
   .logo-preview:after {
@@ -160,6 +163,10 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
       <?= translate('new_subscription', $i18n) ?>
     </button>
     <div class="top-actions">
+      <button class="button secondary-button mobile-search-toggle" id="mobile-search-toggle"
+        title="<?= translate('search', $i18n) ?>" onClick="toggleMobileSearch()">
+        <i class="fa-solid fa-magnifying-glass"></i>
+      </button>
       <div class="search">
         <input type="text" autocomplete="off" name="search" id="search" placeholder="<?= translate('search', $i18n) ?>"
           onkeyup="searchSubscriptions()" />
@@ -180,6 +187,17 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
           <i class="fa-solid fa-arrow-down-wide-short"></i>
         </button>
         <?php include 'includes/sort_options.php'; ?>
+      </div>
+
+      <div class="view-toggle" id="view-toggle">
+        <button type="button" class="view-toggle-button<?= $subscriptionsView === 'list' ? ' selected' : '' ?>"
+          id="view-list-button" title="<?= translate('list_view', $i18n) ?>" onClick="setSubscriptionsView('list')">
+          <i class="fa-solid fa-list"></i>
+        </button>
+        <button type="button" class="view-toggle-button<?= $subscriptionsView === 'grid' ? ' selected' : '' ?>"
+          id="view-grid-button" title="<?= translate('grid_view', $i18n) ?>" onClick="setSubscriptionsView('grid')">
+          <i class="fa-solid fa-table-cells-large"></i>
+        </button>
       </div>
 
       <button class="button secondary-button" id="bulk-mode-btn" title="<?= translate('bulk_actions', $i18n) ?>" onClick="toggleBulkMode()">
@@ -230,7 +248,7 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
     </div>
   </div>
 
-  <div class="subscriptions" id="subscriptions">
+  <div class="subscriptions<?= $subscriptionsView === 'grid' ? ' grid-view' : '' ?>" id="subscriptions">
     <?php
     $formatter = new IntlDateFormatter(
       'en', // Force English locale
@@ -249,6 +267,8 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
       $id = $subscription['id'];
       $print[$id]['id'] = $id;
       $print[$id]['logo'] = $subscription['logo'] != "" ? "images/uploads/logos/" . $subscription['logo'] : "";
+      $print[$id]['logo_text_color'] = $subscription['logo_text_color'] ?? null;
+      $print[$id]['logo_variant'] = !empty($subscription['logo_variant']) ? "images/uploads/logos/" . $subscription['logo_variant'] : null;
       $print[$id]['name'] = $subscription['name'];
       $cycle = $subscription['cycle'];
       $frequency = $subscription['frequency'];
@@ -302,6 +322,18 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
     if (isset($print)) {
       printSubscriptions($print, $sort, $categories, $members, $i18n, $colorTheme, "", $settings['disabledToBottom'], $settings['mobileNavigation'], $settings['showSubscriptionProgress'], $currencies, $lang);
     }
+
+    $googleSearchEnabled = false;
+    if ($db->querySingle("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='google_search'") > 0) {
+      $googleSearchStmt = $db->prepare("SELECT COUNT(*) AS count FROM google_search WHERE user_id = :userId AND api_key != ''");
+      $googleSearchStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+      $googleSearchResult = $googleSearchStmt->execute();
+      if ($googleSearchResult) {
+        $googleSearchRow = $googleSearchResult->fetchArray(SQLITE3_ASSOC);
+        $googleSearchEnabled = $googleSearchRow && $googleSearchRow['count'] > 0;
+      }
+    }
+
     $db->close();
 
     if (count($subscriptions) == 0) {
@@ -344,11 +376,27 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
         <i class="fa-solid fa-magnifying-glass"></i>
       </div>
       <input type="hidden" id="id" name="id">
-      <div id="logo-search-results" class="logo-search">
+      <div class="logo-search-backdrop" id="logo-search-backdrop" onClick="closeLogoSearch()"></div>
+      <div id="logo-search-results" class="logo-search"<?= !empty($googleSearchEnabled) ? ' data-google-search="1"' : '' ?>>
+        <button type="button" class="close-logo-search" onClick="closeLogoSearch()" title="<?= translate('cancel', $i18n) ?>">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
         <header>
-          <?= translate('web_search', $i18n) ?>
-          <span class="fa-solid fa-xmark close-logo-search" onClick="closeLogoSearch()"></span>
+          <h3 id="logo-search-title" data-title="<?= translate('web_search', $i18n) ?>">
+            <?= translate('web_search', $i18n) ?>
+          </h3>
         </header>
+        <div class="logo-search-controls">
+          <div class="logo-search-query">
+            <input type="text" id="logo-search-query" autocomplete="off" inputmode="search"
+              placeholder="<?= translate('search_logo', $i18n) ?>"
+              aria-label="<?= translate('search_logo', $i18n) ?>">
+            <button type="button" id="logo-search-submit" title="<?= translate('search', $i18n) ?>">
+              <i class="fa-solid fa-magnifying-glass"></i>
+            </button>
+          </div>
+          <div id="logo-search-nav" class="logo-search-nav"></div>
+        </div>
         <div id="logo-search-images"></div>
       </div>
     </div>
@@ -516,7 +564,23 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
     </div>
 
     <div class="form-group">
-      <input type="text" id="notes" name="notes" autocomplete="off" placeholder="<?= translate('notes', $i18n) ?>">
+      <div class="notes-editor">
+        <div class="notes-toolbar">
+          <button type="button" class="notes-toolbar-button" title="<?= translate('notes_bold', $i18n) ?>" onClick="applyNotesMarkdown('bold')">
+            <i class="fa-solid fa-bold"></i>
+          </button>
+          <button type="button" class="notes-toolbar-button" title="<?= translate('notes_italic', $i18n) ?>" onClick="applyNotesMarkdown('italic')">
+            <i class="fa-solid fa-italic"></i>
+          </button>
+          <button type="button" class="notes-toolbar-button" title="<?= translate('notes_list', $i18n) ?>" onClick="applyNotesMarkdown('list')">
+            <i class="fa-solid fa-list-ul"></i>
+          </button>
+          <button type="button" class="notes-toolbar-button" title="<?= translate('notes_link', $i18n) ?>" onClick="applyNotesMarkdown('link')">
+            <i class="fa-solid fa-link"></i>
+          </button>
+        </div>
+        <textarea id="notes" name="notes" class="thin" autocomplete="off" placeholder="<?= translate('notes', $i18n) ?>"></textarea>
+      </div>
     </div>
 
     <div class="form-group">
@@ -559,6 +623,8 @@ $headerClass = count($subscriptions) > 0 ? "main-actions" : "main-actions hidden
     </div>
   </form>
 </section>
+
+<?php require_once 'includes/subscription_details_popup.php'; ?>
 <script src="scripts/subscriptions.js?<?= $version ?>"></script>
 <?php
 if (isset($_GET['add'])) {

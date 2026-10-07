@@ -6,6 +6,7 @@ use PHPMailer\PHPMailer\Exception;
 require_once 'validate.php';
 require_once __DIR__ . '/../../includes/connect_endpoint_crontabs.php';
 require_once __DIR__ . '/../../includes/ssrf_helper.php';
+require_once __DIR__ . '/../../includes/webhook_helper.php';
 
 require __DIR__ . '/../../libs/PHPMailer/PHPMailer.php';
 require __DIR__ . '/../../libs/PHPMailer/SMTP.php';
@@ -178,11 +179,14 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
         $currentDate = new DateTime('now');
         $currentDate = $currentDate->format('Y-m-d');
 
-        $query = "SELECT * FROM subscriptions WHERE user_id = :user_id AND inactive = :inactive AND cancellation_date = :cancellationDate ORDER BY payer_user_id ASC";
+        // One-time purchases have no recurring commitment to cancel, and the
+        // subscription form clears their cancellation date, so never notify for them.
+        $query = "SELECT * FROM subscriptions WHERE user_id = :user_id AND inactive = :inactive AND cancellation_date = :cancellationDate AND cycle != :oneTimeCycle ORDER BY payer_user_id ASC";
         $stmt = $db->prepare($query);
         $stmt->bindValue(':user_id', $userId, SQLITE3_INTEGER);
         $stmt->bindValue(':inactive', 0, SQLITE3_INTEGER);
         $stmt->bindValue(':cancellationDate', $currentDate, SQLITE3_TEXT);
+        $stmt->bindValue(':oneTimeCycle', 5, SQLITE3_INTEGER);
         $resultSubscriptions = $stmt->execute();
 
         $notify = [];
@@ -204,70 +208,76 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
 
             // Email notifications if enabled
             if ($emailNotificationsEnabled) {
-
-                $stmt = $db->prepare('SELECT * FROM user WHERE id = :user_id');
-                $stmt->bindValue(':user_id', $userId, SQLITE3_INTEGER);
-                $result = $stmt->execute();
-                $defaultUser = $result->fetchArray(SQLITE3_ASSOC);
-                $defaultEmail = $defaultUser['email'];
-                $defaultName = $defaultUser['username'];
-
-                foreach ($notify as $userId => $perUser) {
-                    $message = "The following subscriptions are up for cancellation:\n";
-
-                    foreach ($perUser as $subscription) {
-                        $message .= $subscription['name'] . " for " . $subscription['price'] ."\n";
-                    }
-
-                    $smtpAuth = (isset($email["smtpUsername"]) && $email["smtpUsername"] != "") || (isset($email["smtpPassword"]) && $email["smtpPassword"] != "");
-
-                    $mail = new PHPMailer(true);
-                    $mail->CharSet = "UTF-8";
-                    $mail->isSMTP();
-
-                    $mail->Host = $email['smtpAddress'];
-                    $mail->SMTPAuth = $smtpAuth;
-                    if ($smtpAuth) {
-                        $mail->Username = $email['smtpUsername'];
-                        $mail->Password = $email['smtpPassword'];
-                    }
-                    if ($email['encryption'] != "none") {
-                        $mail->SMTPSecure = $email['encryption'];
-                    }
-                    $mail->Port = $email['smtpPort'];
-
-                    $stmt = $db->prepare('SELECT * FROM household WHERE id = :userId');
-                    $stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+                // Re-validate at send time: a save-time check alone is bypassable via
+                // DNS rebinding between when the host was saved and when the cron fires.
+                if (!validate_smtp_host($email['smtpAddress'], (int) $email['smtpPort'], $db)) {
+                    echo "SSRF attempt detected for SMTP host. Email notifications not sent.<br />";
+                } else {
+                    $stmt = $db->prepare('SELECT * FROM user WHERE id = :user_id');
+                    $stmt->bindValue(':user_id', $userId, SQLITE3_INTEGER);
                     $result = $stmt->execute();
-                    $user = $result->fetchArray(SQLITE3_ASSOC);
+                    $defaultUser = $result->fetchArray(SQLITE3_ASSOC);
+                    $defaultEmail = $defaultUser['email'];
+                    $defaultName = $defaultUser['username'];
 
-                    $emailaddress = !empty($user['email']) ? $user['email'] : $defaultEmail;
-                    $name = !empty($user['name']) ? $user['name'] : $defaultName;
+                    foreach ($notify as $userId => $perUser) {
+                        $message = "The following subscriptions are up for cancellation:\n";
 
-                    $mail->setFrom($email['fromEmail'], 'Wallos App');
-                    $mail->addAddress($emailaddress, $name);
-
-                    if (!empty($email['otherEmails'])) {
-                        $list = explode(';', $email['otherEmails']);
-
-                        // Avoid duplicate emails
-                        $list = array_unique($list);
-                        $list = array_filter($list, function ($value) use ($emailaddress) {
-                            return $value !== $emailaddress;
-                        });
-
-                        foreach($list as $value) {
-                            $mail->addCC(trim($value));
+                        foreach ($perUser as $subscription) {
+                            $message .= $subscription['name'] . " for " . $subscription['price'] ."\n";
                         }
-                    }
 
-                    $mail->Subject = 'Wallos Cancellation Notification';
-                    $mail->Body = $message;
+                        $smtpAuth = (isset($email["smtpUsername"]) && $email["smtpUsername"] != "") || (isset($email["smtpPassword"]) && $email["smtpPassword"] != "");
 
-                    if ($mail->send()) {
-                        echo "Email Notifications sent<br />";
-                    } else {
-                        echo "Error sending notifications: " . $mail->ErrorInfo . "<br />";
+                        $mail = new PHPMailer(true);
+                        $mail->CharSet = "UTF-8";
+                        $mail->isSMTP();
+                        $mail->Timeout = 15;
+
+                        $mail->Host = $email['smtpAddress'];
+                        $mail->SMTPAuth = $smtpAuth;
+                        if ($smtpAuth) {
+                            $mail->Username = $email['smtpUsername'];
+                            $mail->Password = $email['smtpPassword'];
+                        }
+                        if ($email['encryption'] != "none") {
+                            $mail->SMTPSecure = $email['encryption'];
+                        }
+                        $mail->Port = $email['smtpPort'];
+
+                        $stmt = $db->prepare('SELECT * FROM household WHERE id = :userId');
+                        $stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+                        $result = $stmt->execute();
+                        $user = $result->fetchArray(SQLITE3_ASSOC);
+
+                        $emailaddress = !empty($user['email']) ? $user['email'] : $defaultEmail;
+                        $name = !empty($user['name']) ? $user['name'] : $defaultName;
+
+                        $mail->setFrom($email['fromEmail'], 'Wallos App');
+                        $mail->addAddress($emailaddress, $name);
+
+                        if (!empty($email['otherEmails'])) {
+                            $list = explode(';', $email['otherEmails']);
+
+                            // Avoid duplicate emails
+                            $list = array_unique($list);
+                            $list = array_filter($list, function ($value) use ($emailaddress) {
+                                return $value !== $emailaddress;
+                            });
+
+                            foreach($list as $value) {
+                                $mail->addCC(trim($value));
+                            }
+                        }
+
+                        $mail->Subject = 'Wallos Cancellation Notification';
+                        $mail->Body = $message;
+
+                        if ($mail->send()) {
+                            echo "Email Notifications sent<br />";
+                        } else {
+                            echo "Error sending notifications: " . $mail->ErrorInfo . "<br />";
+                        }
                     }
                 }
             }
@@ -318,6 +328,8 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                             'Content-Type: application/json'
                         ]);
                         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+                        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
                         curl_setopt($ch, CURLOPT_RESOLVE, ["{$ssrf['host']}:{$ssrf['port']}:{$ssrf['ip']}"]);
 
                         $response = curl_exec($ch);
@@ -367,6 +379,8 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
                         curl_setopt($ch, CURLOPT_POSTFIELDS, $data_string);
                         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+                        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
                         curl_setopt(
                             $ch,
                             CURLOPT_HTTPHEADER,
@@ -422,6 +436,8 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
                     curl_setopt($ch, CURLOPT_POSTFIELDS, $data_string);
                     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+                    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
                     curl_setopt(
                         $ch,
                         CURLOPT_HTTPHEADER,
@@ -468,6 +484,8 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                         'message' => $message,
                     ]));
                     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+                    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 
                     $result = curl_exec($ch);
 
@@ -519,6 +537,8 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                         curl_setopt($ch, CURLOPT_POSTFIELDS, $message);
                         curl_setopt($ch, CURLOPT_HTTPHEADER, $customheaders);
                         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+                        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 
                         if ($ntfy['ignore_ssl']) {
                             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
@@ -566,7 +586,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                             $payload = str_replace("{{subscription_payer}}", $payer, $payload);
                             $payload = str_replace("{{subscription_date}}", $subscription['date'], $payload);
                             $payload = str_replace("{{subscription_url}}", $subscription['url'], $payload);
-                            $payload = str_replace("{{subscription_notes}}", $subscription['notes'], $payload);
+                            $payload = str_replace("{{subscription_notes}}", webhookJsonEscape($subscription['notes']), $payload);
                 
                             // Initialize cURL for each subscription
                             $ch = curl_init();
@@ -581,6 +601,8 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                             }
                 
                             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+                            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
                 
                             // Handle SSL settings
                             if ($webhook['ignore_ssl']) {

@@ -7,7 +7,16 @@ $firstname = $parts[0] ?? '';
 $lastname = $parts[1] ?? '';
 
 // Defaults
-$language = 'en';
+//
+// The language comes from the provider when it named one. "locale" is a
+// standard OIDC claim and Authentik, Authelia and Keycloak all send it, so
+// hardcoding English here meant every account an identity provider created was
+// English whatever the provider said - and the person never saw the
+// registration form that would have asked them, because they never went
+// through it. resolve_language() answers 'en' when there is no claim or when
+// the claim names no translation, which is what this line did before.
+require_once __DIR__ . '/../i18n/languages.php';
+$language = resolve_language($userInfo['locale'] ?? null);
 $avatar = "images/avatars/0.svg";
 $budget = 0;
 $main_currency_id = 1; // Euro
@@ -15,8 +24,8 @@ $password = bin2hex(random_bytes(16)); // 32-character random password
 $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
 
 // Insert user
-$query = "INSERT INTO user (username, email, oidc_sub, main_currency, avatar, language, budget, firstname, lastname, password)
-          VALUES (:username, :email, :oidc_sub, :main_currency, :avatar, :language, :budget, :firstname, :lastname, :password)";
+$query = "INSERT INTO user (username, email, oidc_sub, main_currency, avatar, language, budget, firstname, lastname, password, api_key)
+          VALUES (:username, :email, :oidc_sub, :main_currency, :avatar, :language, :budget, :firstname, :lastname, :password, :api_key)";
 $stmt = $db->prepare($query);
 $stmt->bindValue(':username', $username, SQLITE3_TEXT);
 $stmt->bindValue(':email', $email, SQLITE3_TEXT);
@@ -28,6 +37,7 @@ $stmt->bindValue(':budget', $budget, SQLITE3_INTEGER);
 $stmt->bindValue(':firstname', $firstname, SQLITE3_TEXT);
 $stmt->bindValue(':lastname', $lastname, SQLITE3_TEXT);
 $stmt->bindValue(':password', $hashedPassword, SQLITE3_TEXT);
+$stmt->bindValue(':api_key', bin2hex(random_bytes(32)), SQLITE3_TEXT);
 
 if (!$stmt->execute()) {
     die("Failed to create user");
@@ -46,16 +56,11 @@ $stmt->bindValue(':name', $username, SQLITE3_TEXT);
 $stmt->bindValue(':user_id', $newUserId, SQLITE3_INTEGER);
 $stmt->execute();
 
-// Categories
-$categories = [
-    'No category', 'Entertainment', 'Music', 'Utilities', 'Food & Beverages',
-    'Health & Wellbeing', 'Productivity', 'Banking', 'Transport', 'Education',
-    'Insurance', 'Gaming', 'News & Magazines', 'Software', 'Technology',
-    'Cloud Services', 'Charity & Donations'
-];
+require_once __DIR__ . '/../default_names.php';
 
+// Categories
 $stmt = $db->prepare("INSERT INTO categories (name, \"order\", user_id) VALUES (:name, :order, :user_id)");
-foreach ($categories as $index => $name) {
+foreach (default_categories($language) as $index => $name) {
     $stmt->bindValue(':name', $name, SQLITE3_TEXT);
     $stmt->bindValue(':order', $index + 1, SQLITE3_INTEGER);
     $stmt->bindValue(':user_id', $newUserId, SQLITE3_INTEGER);
@@ -63,42 +68,8 @@ foreach ($categories as $index => $name) {
 }
 
 // Payment Methods
-$payment_methods = [
-    ['name' => 'PayPal', 'icon' => 'images/uploads/icons/paypal.png'],
-    ['name' => 'Credit Card', 'icon' => 'images/uploads/icons/creditcard.png'],
-    ['name' => 'Bank Transfer', 'icon' => 'images/uploads/icons/banktransfer.png'],
-    ['name' => 'Direct Debit', 'icon' => 'images/uploads/icons/directdebit.png'],
-    ['name' => 'Money', 'icon' => 'images/uploads/icons/money.png'],
-    ['name' => 'Google Pay', 'icon' => 'images/uploads/icons/googlepay.png'],
-    ['name' => 'Samsung Pay', 'icon' => 'images/uploads/icons/samsungpay.png'],
-    ['name' => 'Apple Pay', 'icon' => 'images/uploads/icons/applepay.png'],
-    ['name' => 'Crypto', 'icon' => 'images/uploads/icons/crypto.png'],
-    ['name' => 'Klarna', 'icon' => 'images/uploads/icons/klarna.png'],
-    ['name' => 'Amazon Pay', 'icon' => 'images/uploads/icons/amazonpay.png'],
-    ['name' => 'SEPA', 'icon' => 'images/uploads/icons/sepa.png'],
-    ['name' => 'Skrill', 'icon' => 'images/uploads/icons/skrill.png'],
-    ['name' => 'Sofort', 'icon' => 'images/uploads/icons/sofort.png'],
-    ['name' => 'Stripe', 'icon' => 'images/uploads/icons/stripe.png'],
-    ['name' => 'Affirm', 'icon' => 'images/uploads/icons/affirm.png'],
-    ['name' => 'AliPay', 'icon' => 'images/uploads/icons/alipay.png'],
-    ['name' => 'Elo', 'icon' => 'images/uploads/icons/elo.png'],
-    ['name' => 'Facebook Pay', 'icon' => 'images/uploads/icons/facebookpay.png'],
-    ['name' => 'GiroPay', 'icon' => 'images/uploads/icons/giropay.png'],
-    ['name' => 'iDeal', 'icon' => 'images/uploads/icons/ideal.png'],
-    ['name' => 'Union Pay', 'icon' => 'images/uploads/icons/unionpay.png'],
-    ['name' => 'Interac', 'icon' => 'images/uploads/icons/interac.png'],
-    ['name' => 'WeChat', 'icon' => 'images/uploads/icons/wechat.png'],
-    ['name' => 'Paysafe', 'icon' => 'images/uploads/icons/paysafe.png'],
-    ['name' => 'Poli', 'icon' => 'images/uploads/icons/poli.png'],
-    ['name' => 'Qiwi', 'icon' => 'images/uploads/icons/qiwi.png'],
-    ['name' => 'ShopPay', 'icon' => 'images/uploads/icons/shoppay.png'],
-    ['name' => 'Venmo', 'icon' => 'images/uploads/icons/venmo.png'],
-    ['name' => 'VeriFone', 'icon' => 'images/uploads/icons/verifone.png'],
-    ['name' => 'WebMoney', 'icon' => 'images/uploads/icons/webmoney.png'],
-];
-
 $stmt = $db->prepare("INSERT INTO payment_methods (name, icon, \"order\", user_id) VALUES (:name, :icon, :order, :user_id)");
-foreach ($payment_methods as $index => $method) {
+foreach (default_payment_methods($language) as $index => $method) {
     $stmt->bindValue(':name', $method['name'], SQLITE3_TEXT);
     $stmt->bindValue(':icon', $method['icon'], SQLITE3_TEXT);
     $stmt->bindValue(':order', $index + 1, SQLITE3_INTEGER);
@@ -170,8 +141,8 @@ if ($currency) {
 $userData['main_currency'] = $currency['id'];
 
 // Insert settings
-$stmt = $db->prepare("INSERT INTO settings (dark_theme, monthly_price, convert_currency, remove_background, color_theme, hide_disabled, user_id, disabled_to_bottom, show_original_price, mobile_nav) 
-                      VALUES (2, 0, 0, 0, 'blue', 0, :user_id, 0, 0, 0)");
+$stmt = $db->prepare("INSERT INTO settings (dark_theme, monthly_price, convert_currency, remove_background, color_theme, hide_disabled, user_id, disabled_to_bottom, show_original_price, mobile_nav, week_starts_sunday) 
+                      VALUES (2, 0, 0, 0, 'blue', 0, :user_id, 0, 0, 0, 0)");
 $stmt->bindValue(':user_id', $newUserId, SQLITE3_INTEGER);
 $stmt->execute();
 

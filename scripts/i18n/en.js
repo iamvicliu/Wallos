@@ -65,4 +65,12 @@ let i18n = {
   confirm_bulk_delete: "Delete {count} subscription(s)? This cannot be undone.",
   bulk_action_success: "{count} subscription(s) updated",
   error_bulk_action: "Error performing bulk action",
+  no_results_found: "No results found",
+  invalid_budget: "Budget must be a non-negative number",
+  invalid_budget_period: "Invalid budget period selected",
+  invalid_budget_anchor_date: "Anchor date must be a valid date",
+  push_not_supported: "Push notifications are not supported in this browser.",
+  push_permission_denied: "Notification permission was not granted.",
+  delete: "Delete",
+  no_devices_registered: "No devices registered yet.",
 }

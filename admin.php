@@ -1,38 +1,32 @@
 <?php
 require_once 'includes/header.php';
+require_once 'includes/oidc_settings.php';
+require_once 'includes/ssrf_helper.php';
+require_once 'includes/instance_config.php';
 
 if ($isAdmin != 1) {
     header('Location: index.php');
     exit;
 }
 
-// get admin settings from admin table
-$stmt = $db->prepare('SELECT * FROM admin');
-$result = $stmt->execute();
-$settings = $result->fetchArray(SQLITE3_ASSOC);
+// get admin settings from admin table, with anything the deployment owns
+// applied over them
+$adminConfiguration = wallos_get_effective_admin_configuration($db);
+$settings = $adminConfiguration['settings'];
+$instanceManagedFields = $adminConfiguration['managed_fields'];
+$instanceNotes = $adminConfiguration['notes'];
 
-// get OIDC settings
-$stmt = $db->prepare('SELECT * FROM oauth_settings WHERE id = 1');
-$result = $stmt->execute();
-$oidcSettings = $result->fetchArray(SQLITE3_ASSOC);
+$oidcConfiguration = wallos_get_effective_oidc_configuration($db);
+$oidcSettings = $oidcConfiguration['settings'];
+$oidcManagedFields = $oidcConfiguration['managed_fields'];
+$oidcNotes = $oidcConfiguration['notes'];
 
-if ($oidcSettings === false) {
-    // Table is empty or no row with id=1, set defaults
-    $oidcSettings = [
-        'name' => '',
-        'client_id' => '',
-        'client_secret' => '',
-        'authorization_url' => '',
-        'token_url' => '',
-        'user_info_url' => '',
-        'redirect_url' => '',
-        'logout_url' => '',
-        'user_identifier_field' => 'sub',
-        'scopes' => 'openid email profile',
-        'auth_style' => 'auto',
-        'auto_create_user' => 0,
-        'password_login_disabled' => 0
-    ];
+$ssrfConfiguration = wallos_get_effective_ssrf_allowlist($db);
+$ssrfManagedFields = $ssrfConfiguration['is_managed'] ? ['allowlist' => 'SSRF_ALLOWLIST'] : [];
+
+function oidc_input_attrs($field, $managedFields)
+{
+    return isset($managedFields[$field]) ? 'disabled data-managed-by="' . htmlspecialchars($managedFields[$field]) . '"' : '';
 }
 
 // get user accounts
@@ -70,7 +64,7 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
                 </p>
                 <p>
                     <i class="fa-solid fa-circle-info"></i>
-                    By enabling user registrations, the setting to disable login will be unavailable.
+                    <?= translate('registrations_disable_login_info', $i18n) ?>
                 </p>
             </div>
             <div class="form-group-inline">
@@ -106,7 +100,6 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
                     <?= translate('server_url_password_reset', $i18n) ?>
                 </p>
             </div>
-            <hr>
             <div class="form-group-inline">
                 <input type="checkbox" id="disableLogin" <?= $settings['login_disabled'] ? 'checked' : '' ?>
                     <?= $loginDisabledAllowed ? '' : 'disabled' ?> />
@@ -114,11 +107,11 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
             </div>
             <div class="settings-notes">
                 <p>
-                    <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+                    <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
                     <?= translate('disable_login_info', $i18n) ?>
                 </p>
                 <p>
-                    <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+                    <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
                     <?= translate('disable_login_info2', $i18n) ?>
                 </p>
             </div>
@@ -215,63 +208,88 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
         </header>
         <div class="admin-form">
             <div class="form-group-inline">
-                <input type="checkbox" id="oidcEnabled" <?= $settings['oidc_oauth_enabled'] ? 'checked' : '' ?>
+                <input type="checkbox" id="oidcEnabled" <?= $oidcConfiguration['enabled'] ? 'checked' : '' ?>
+                    <?= oidc_input_attrs('enabled', $oidcManagedFields) ?>
                     onchange="toggleOidcEnabled()" />
                 <label for="oidcEnabled"><?= translate('oidc_oauth_enabled', $i18n) ?></label>
             </div>
             <div class="form-group">
                 <input type="text" id="oidcName" placeholder="Provider Name" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['name']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['name']) ?>" <?= oidc_input_attrs('name', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcClientId" placeholder="Client ID" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['client_id']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['client_id']) ?>" <?= oidc_input_attrs('client_id', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcClientSecret" placeholder="Client Secret" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['client_secret']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['client_secret']) ?>" <?= oidc_input_attrs('client_secret', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcAuthUrl" placeholder="Auth URL" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['authorization_url']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['authorization_url']) ?>" <?= oidc_input_attrs('authorization_url', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcTokenUrl" placeholder="Token URL" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['token_url']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['token_url']) ?>" <?= oidc_input_attrs('token_url', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcUserInfoUrl" placeholder="User Info URL" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['user_info_url']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['user_info_url']) ?>" <?= oidc_input_attrs('user_info_url', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcRedirectUrl" placeholder="Redirect URL" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['redirect_url']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['redirect_url']) ?>" <?= oidc_input_attrs('redirect_url', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcLogoutUrl" placeholder="Logout URL" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['logout_url']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['logout_url']) ?>" <?= oidc_input_attrs('logout_url', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcUserIdentifierField" placeholder="User Identifier Field" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['user_identifier_field']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['user_identifier_field']) ?>" <?= oidc_input_attrs('user_identifier_field', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="text" id="oidcScopes" placeholder="Scopes" autocomplete="off"
-                    value="<?= htmlspecialchars($oidcSettings['scopes']) ?>" />
+                    value="<?= htmlspecialchars($oidcSettings['scopes']) ?>" <?= oidc_input_attrs('scopes', $oidcManagedFields) ?> />
             </div>
             <div class="form-group">
                 <input type="hidden" id="oidcAuthStyle" placeholder="Auth Style" autocomplete="off"
                     value="<?= htmlspecialchars($oidcSettings['auth_style']) ?>" />
             </div>
             <div class="form-group-inline">
-                <input type="checkbox" id="oidcAutoCreateUser" <?= $oidcSettings['auto_create_user'] ? 'checked' : '' ?> />
+                <input type="checkbox" id="oidcAutoCreateUser" <?= $oidcSettings['auto_create_user'] ? 'checked' : '' ?>
+                    <?= oidc_input_attrs('auto_create_user', $oidcManagedFields) ?> />
                 <label for="oidcAutoCreateUser"><?= translate('create_user_automatically', $i18n) ?></label>
             </div>
             <div class="form-group-inline">
                 <input type="checkbox" id="oidcPasswordLoginDisabled"
-                    <?= $oidcSettings['password_login_disabled'] ? 'checked' : '' ?> />
+                    <?= $oidcSettings['password_login_disabled'] ? 'checked' : '' ?>
+                    <?= oidc_input_attrs('password_login_disabled', $oidcManagedFields) ?> />
                 <label for="oidcPasswordLoginDisabled"><?= translate('disable_password_login', $i18n) ?></label>
             </div>
+            <div class="form-group-inline">
+                <input type="checkbox" id="oidcRequireEmailVerified"
+                    <?= $oidcSettings['require_email_verified'] ? 'checked' : '' ?>
+                    <?= oidc_input_attrs('require_email_verified', $oidcManagedFields) ?> />
+                <label for="oidcRequireEmailVerified"><?= translate('require_email_verified_linking', $i18n) ?></label>
+            </div>
+            <?php if (!empty($oidcManagedFields) || !empty($oidcNotes)): ?>
+                <div class="settings-notes">
+                    <?php if (!empty($oidcManagedFields)): ?>
+                        <p>
+                            <i class="fa-solid fa-circle-info"></i>
+                            OIDC fields managed by environment variables are shown here but cannot be edited in the UI.
+                        </p>
+                    <?php endif; ?>
+                    <?php foreach ($oidcNotes as $oidcNote): ?>
+                        <p>
+                            <i class="fa-solid fa-circle-info"></i>
+                            <?= htmlspecialchars($oidcNote) ?>
+                        </p>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
             <div class="buttons">
                 <input type="submit" class="thin mobile-grow" value="<?= translate('save', $i18n) ?>"
                     id="saveOidcSettingsButton" onClick="saveOidcSettingsButton()" />
@@ -287,38 +305,54 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
         <div class="admin-form">
             <div class="form-group-inline">
                 <input type="text" name="smtpaddress" id="smtpaddress" autocomplete="off"
-                    placeholder="<?= translate('smtp_address', $i18n) ?>" value="<?= htmlspecialchars($settings['smtp_address']) ?>" />
+                    placeholder="<?= translate('smtp_address', $i18n) ?>" value="<?= htmlspecialchars($settings['smtp_address']) ?>"
+                    <?= oidc_input_attrs('smtp_address', $instanceManagedFields) ?> />
                 <input type="text" name="smtpport" id="smtpport" autocomplete="off"
-                    placeholder="<?= translate('port', $i18n) ?>" class="one-third" value="<?= htmlspecialchars($settings['smtp_port']) ?>" />
+                    placeholder="<?= translate('port', $i18n) ?>" class="one-third" value="<?= htmlspecialchars($settings['smtp_port']) ?>"
+                    <?= oidc_input_attrs('smtp_port', $instanceManagedFields) ?> />
             </div>
             <div class="form-group-inline">
                 <div>
                     <input type="radio" name="encryption" id="encryptionnone" value="none"
-                        <?= empty($settings['encryption']) || $settings['encryption'] == "none" ? "checked" : "" ?> />
+                        <?= empty($settings['encryption']) || $settings['encryption'] == "none" ? "checked" : "" ?>
+                        <?= oidc_input_attrs('encryption', $instanceManagedFields) ?> />
                     <label for="encryptionnone"><?= translate('none', $i18n) ?></label>
                 </div>
                 <div>
                     <input type="radio" name="encryption" id="encryptiontls" value="tls"
-                        <?= $settings['encryption'] == "tls" ? "checked" : "" ?> />
+                        <?= $settings['encryption'] == "tls" ? "checked" : "" ?>
+                        <?= oidc_input_attrs('encryption', $instanceManagedFields) ?> />
                     <label for="encryptiontls"><?= translate('tls', $i18n) ?></label>
                 </div>
                 <div>
                     <input type="radio" name="encryption" id="encryptionssl" value="ssl"
-                        <?= $settings['encryption'] == "ssl" ? "checked" : "" ?> />
+                        <?= $settings['encryption'] == "ssl" ? "checked" : "" ?>
+                        <?= oidc_input_attrs('encryption', $instanceManagedFields) ?> />
                     <label for="encryptionssl"><?= translate('ssl', $i18n) ?></label>
                 </div>
             </div>
             <div class="form-group-inline">
                 <input type="text" name="smtpusername" id="smtpusername" autocomplete="off"
-                    placeholder="<?= translate('smtp_username', $i18n) ?>" value="<?= htmlspecialchars($settings['smtp_username']) ?>" />
+                    placeholder="<?= translate('smtp_username', $i18n) ?>" value="<?= htmlspecialchars($settings['smtp_username']) ?>"
+                    <?= oidc_input_attrs('smtp_username', $instanceManagedFields) ?> />
             </div>
             <div class="form-group-inline">
-                <input type="password" name="smtppassword" id="smtppassword" autocomplete="off"
-                    placeholder="<?= translate('smtp_password', $i18n) ?>" value="<?= htmlspecialchars($settings['smtp_password']) ?>" />
+                <?php if (isset($instanceManagedFields['smtp_password'])): ?>
+                    <?php /* The value is never rendered when the deployment owns it: a mounted
+                             secret that reaches the page source has left the place it was
+                             mounted into. The field says it is set, and nothing more. */ ?>
+                    <input type="password" name="smtppassword" id="smtppassword" autocomplete="off"
+                        placeholder="<?= translate('smtp_password', $i18n) ?>" value=""
+                        <?= oidc_input_attrs('smtp_password', $instanceManagedFields) ?> />
+                <?php else: ?>
+                    <input type="password" name="smtppassword" id="smtppassword" autocomplete="off"
+                        placeholder="<?= translate('smtp_password', $i18n) ?>" value="<?= htmlspecialchars($settings['smtp_password']) ?>" />
+                <?php endif; ?>
             </div>
             <div class="form-group-inline">
                 <input type="text" name="fromemail" id="fromemail" autocomplete="off"
-                    placeholder="<?= translate('from_email', $i18n) ?>" value="<?= htmlspecialchars($settings['from_email']) ?>" />
+                    placeholder="<?= translate('from_email', $i18n) ?>" value="<?= htmlspecialchars($settings['from_email']) ?>"
+                    <?= oidc_input_attrs('from_email', $instanceManagedFields) ?> />
             </div>
             <div class="buttons">
                 <input type="button" class="secondary-button thin mobile-grow" value="<?= translate('test', $i18n) ?>"
@@ -334,6 +368,19 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
                     <i class="fa-solid fa-circle-info"></i>
                     <?= translate('smtp_usage_info', $i18n) ?>
                 </p>
+                <?php if (!empty($instanceManagedFields)): ?>
+                    <p>
+                        <i class="fa-solid fa-circle-info"></i>
+                        Fields managed by environment variables are shown here but cannot be
+                        edited in the UI: <?= htmlspecialchars(implode(', ', $instanceManagedFields)) ?>.
+                    </p>
+                <?php endif; ?>
+                <?php foreach ($instanceNotes as $instanceNote): ?>
+                    <p>
+                        <i class="fa-solid fa-circle-info"></i>
+                        <?= htmlspecialchars($instanceNote) ?>
+                    </p>
+                <?php endforeach; ?>
             </div>
         </div>
     </section>
@@ -344,23 +391,42 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
     <div class="admin-form">
         <div class="form-group-inline">
             <input type="text" name="local_webhook_notifications_allowlist" id="local_webhook_notifications_allowlist" autocomplete="off"
-                placeholder="e.g., 192.168.1.5:8123, homeassistant.local" value="<?= htmlspecialchars($settings['local_webhook_notifications_allowlist'] ?? '', ENT_QUOTES, 'UTF-8') ?>" />
+                placeholder="e.g., 192.168.1.5:8123, homeassistant.local" value="<?= htmlspecialchars($ssrfConfiguration['raw'], ENT_QUOTES, 'UTF-8') ?>" <?= oidc_input_attrs('allowlist', $ssrfManagedFields) ?> />
         </div>
-        
-        <div class="buttons">
-            <input type="submit" class="thin mobile-grow" value="<?= translate('save', $i18n) ?>"
-                id="saveSecuritySettingsButton" onClick="saveSecuritySettingsButton()" />
-        </div>
-        
+
         <div class="settings-notes">
             <p>
-                <i class="fa-solid fa-circle-info"></i> 
+                <i class="fa-solid fa-circle-info"></i>
                 <?= translate('ssrf_protection_info', $i18n) ?>
             </p>
             <p>
                 <i class="fa-solid fa-circle-info"></i>
                 <?= translate('local_webhook_info', $i18n) ?>
             </p>
+            <?php if ($ssrfConfiguration['is_managed']): ?>
+                <p>
+                    <i class="fa-solid fa-circle-info"></i>
+                    <?= translate('ssrf_allowlist_env_managed', $i18n) ?>
+                </p>
+            <?php endif; ?>
+        </div>
+
+        <div class="form-group-inline">
+            <input type="checkbox" id="allow_standard_users_local_webhooks" name="allow_standard_users_local_webhooks"
+                <?= $ssrfConfiguration['allow_standard_users'] ? 'checked' : '' ?> />
+            <label for="allow_standard_users_local_webhooks"><?= translate('allow_standard_users_local_webhooks', $i18n) ?></label>
+        </div>
+
+        <div class="settings-notes">
+            <p>
+                <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                <?= translate('allow_standard_users_local_webhooks_info', $i18n) ?>
+            </p>
+        </div>
+
+        <div class="buttons">
+            <input type="submit" class="thin mobile-grow" value="<?= translate('save', $i18n) ?>"
+                id="saveSecuritySettingsButton" onClick="saveSecuritySettingsButton()" />
         </div>
     </div>
 </section>
@@ -377,7 +443,7 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
     // find unused upload logos
 
     // Get all logos in the subscriptions table
-    $query = 'SELECT logo FROM subscriptions';
+    $query = 'SELECT logo, logo_variant FROM subscriptions';
     $stmt = $db->prepare($query);
     $result = $stmt->execute();
 
@@ -385,6 +451,7 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
     $logosOnDB = [];
     while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
         $logosOnDB[] = $row['logo'];
+        $logosOnDB[] = $row['logo_variant'];
     }
 
     // Get all logos in the payment_methods table
@@ -442,23 +509,27 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
                 if ($hasUpdate) {
                     ?>
                     <div class="updates-list">
-                        <p><?= translate('new_version_available', $i18n) ?>.</p>
+                        <p class="updates-list-title">
+                            <i class="fa-solid fa-arrow-up"></i>
+                            <?= translate('new_version_available', $i18n) ?>.
+                        </p>
                         <p>
                             <?= translate('current_version', $i18n) ?>:
                             <span>
-                                <?= $version ?>
-                                <a href="https://github.com/ellite/Wallos/releases/tag/<?= $version ?>" target="_blank">
-                                    <i class="fa-solid fa-external-link"></i>
+                                <?= htmlspecialchars($version) ?>
+                                <a href="https://github.com/ellite/Wallos/releases/tag/<?= htmlspecialchars($version) ?>"
+                                    target="_blank" title="<?= translate('external_url', $i18n) ?>" rel="noreferrer">
+                                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
                                 </a>
                             </span>
                         </p>
                         <p>
                             <?= translate('latest_version', $i18n) ?>:
-                            <span>
-                                <?= $latestVersion ?>
-                                <a href="https://github.com/ellite/Wallos/releases/tag/<?= $latestVersion ?>"
-                                    target="_blank">
-                                    <i class="fa-solid fa-external-link"></i>
+                            <span class="updates-list-latest">
+                                <?= htmlspecialchars($latestVersion) ?>
+                                <a href="https://github.com/ellite/Wallos/releases/tag/<?= htmlspecialchars($latestVersion) ?>"
+                                    target="_blank" title="<?= translate('external_url', $i18n) ?>" rel="noreferrer">
+                                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
                                 </a>
                             </span>
                         </p>

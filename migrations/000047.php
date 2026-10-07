@@ -1,21 +1,15 @@
 <?php
-// This migration adds default_auto_renew and default_notifications columns to the settings table.
-// These control the default state of the auto-renew and notifications toggles when adding a new subscription.
+// Adds require_email_verified to oauth_settings.
+// When enabled (default), account linking by email is only allowed when the
+// IdP marks email_verified = true, preventing account takeover via unverified emails.
 
-$columnQuery = $db->query("SELECT * FROM pragma_table_info('settings') where name='default_auto_renew'");
-$column = $columnQuery->fetchArray(SQLITE3_ASSOC);
-if (!$column) {
-    $db->exec('ALTER TABLE settings ADD COLUMN default_auto_renew BOOLEAN DEFAULT 1');
-    echo "Column 'default_auto_renew' added to table 'settings'.\n";
-} else {
-    echo "Column 'default_auto_renew' already exists in table 'settings'.\n";
+$columnQuery = $db->query("SELECT * FROM pragma_table_info('oauth_settings') WHERE name='require_email_verified'");
+$columnRequired = $columnQuery->fetchArray(SQLITE3_ASSOC) === false;
+
+if ($columnRequired) {
+    $db->exec("ALTER TABLE oauth_settings ADD COLUMN require_email_verified INTEGER DEFAULT 1");
 }
 
-$columnQuery = $db->query("SELECT * FROM pragma_table_info('settings') where name='default_notifications'");
-$column = $columnQuery->fetchArray(SQLITE3_ASSOC);
-if (!$column) {
-    $db->exec('ALTER TABLE settings ADD COLUMN default_notifications BOOLEAN DEFAULT 1');
-    echo "Column 'default_notifications' added to table 'settings'.\n";
-} else {
-    echo "Column 'default_notifications' already exists in table 'settings'.\n";
-}
+// SQLite does not physically store ALTER TABLE defaults in existing rows, so
+// PHP's SQLite3 extension may return NULL for them. Backfill explicitly.
+$db->exec("UPDATE oauth_settings SET require_email_verified = 1 WHERE require_email_verified IS NULL");

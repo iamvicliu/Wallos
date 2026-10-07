@@ -10,6 +10,16 @@ if ($row[0] > 0) {
     ]));
 }
 
+$setupTokenFile = '../../db/setup_token.db';
+$storedToken = file_exists($setupTokenFile) ? trim(file_get_contents($setupTokenFile)) : '';
+$submittedToken = $_POST['setup_token'] ?? '';
+if ($storedToken === '' || !hash_equals($storedToken, $submittedToken)) {
+    die(json_encode([
+        "success" => false,
+        "message" => "Invalid setup token"
+    ]));
+}
+
 function emptyRestoreFolder() {
     $files = new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator('../../.tmp', RecursiveDirectoryIterator::SKIP_DOTS),
@@ -34,6 +44,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $zip = new ZipArchive();
             if ($zip->open($fileDestination) === true) {
+                // Validate every entry before extracting. ZipArchive::extractTo()
+                // offers no protection against path traversal (Zip Slip), and the
+                // extraction target sits under the web root, so a crafted archive
+                // could otherwise drop an executable script here (RCE).
+                // Extensions the web server may execute if extracted into a
+                // servable path. .tmp/ is denied at the nginx layer as the primary
+                // control; this is defense in depth for other deployments (Apache).
+                $blockedExtensions = [
+                    'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'pht',
+                    'phps', 'phar', 'shtml', 'cgi', 'pl', 'py', 'sh',
+                    'htaccess', 'htpasswd'
+                ];
+                for ($i = 0; $i < $zip->numFiles; $i++) {
+                    $entry = str_replace('\\', '/', $zip->getNameIndex($i));
+
+                    if ($entry === '' || $entry[0] === '/' || in_array('..', explode('/', $entry), true)) {
+                        $zip->close();
+                        emptyRestoreFolder();
+                        die(json_encode([
+                            "success" => false,
+                            "message" => "Invalid backup file: unsafe file path detected."
+                        ]));
+                    }
+
+                    if (in_array(strtolower(pathinfo($entry, PATHINFO_EXTENSION)), $blockedExtensions, true)) {
+                        $zip->close();
+                        emptyRestoreFolder();
+                        die(json_encode([
+                            "success" => false,
+                            "message" => "Invalid backup file: disallowed file type detected."
+                        ]));
+                    }
+                }
                 $zip->extractTo('../../.tmp/restore/');
                 $zip->close();
             } else {
@@ -44,10 +87,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (file_exists('../../.tmp/restore/wallos.db')) {
-                if (file_exists('../../db/wallos.db')) {
-                    unlink('../../db/wallos.db');
+                $db->close();
+
+                if (file_exists('../../db/wallos.db') && !unlink('../../db/wallos.db')) {
+                    emptyRestoreFolder();
+                    die(json_encode([
+                        "success" => false,
+                        "message" => "Failed to remove existing database"
+                    ]));
                 }
-                rename('../../.tmp/restore/wallos.db', '../../db/wallos.db');
+
+                if (!rename('../../.tmp/restore/wallos.db', '../../db/wallos.db')) {
+                    emptyRestoreFolder();
+                    die(json_encode([
+                        "success" => false,
+                        "message" => "Failed to replace database"
+                    ]));
+                }
 
                 if (file_exists('../../.tmp/restore/logos/')) {
                     $dir = '../../images/uploads/logos/';
@@ -81,6 +137,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 emptyRestoreFolder();
+
+                if (file_exists($setupTokenFile)) {
+                    unlink($setupTokenFile);
+                }
+
+                $db = new SQLite3('../../db/wallos.db');
+                $db->busyTimeout(5000);
+                ob_start();
+                require_once __DIR__ . '/../../includes/run_migrations.php';
+                ob_end_clean();
 
                 echo json_encode([
                     "success" => true,

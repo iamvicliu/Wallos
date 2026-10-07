@@ -58,15 +58,6 @@ function changeLanguage(selectedLanguage) {
   location.reload();
 }
 
-function runDatabaseMigration() {
-  let url = "endpoints/db/migrate.php";
-  fetch(url)
-    .then(response => {
-      if (!response.ok) {
-        throw new Error(translate('network_response_error'));
-      }
-    });
-}
 
 function showErrorMessage(message) {
   const toast = document.querySelector(".toast#errorToast");
@@ -131,21 +122,36 @@ function showSuccessMessage(message) {
 }
 
 
+function openRestoreModal() {
+  document.getElementById('restoreModalBackdrop').classList.add('is-open');
+}
+
+function closeRestoreModal() {
+  document.getElementById('restoreModalBackdrop').classList.remove('is-open');
+}
+
 function openRestoreDBFileSelect() {
   document.getElementById('restoreDBFile').click();
 };
+
+function onRestoreFileSelected() {
+  const input = document.getElementById('restoreDBFile');
+  const label = document.getElementById('restoreFileName');
+  label.textContent = input.files[0] ? input.files[0].name : '';
+}
 
 function restoreDB() {
   const input = document.getElementById('restoreDBFile');
   const file = input.files[0];
 
   if (!file) {
-    console.error('No file selected');
+    showErrorMessage('No file selected');
     return;
   }
 
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('setup_token', document.getElementById('setupToken').value.trim());
 
   fetch('endpoints/db/import.php', {
     method: 'POST',
@@ -154,15 +160,11 @@ function restoreDB() {
     .then(response => response.json())
     .then(data => {
       if (data.success) {
+        closeRestoreModal();
         showSuccessMessage(data.message);
-        fetch('endpoints/db/migrate.php')
-          .then(response => response.text())
-          .then(() => {
+        setTimeout(() => {
             window.location.href = 'logout.php';
-          })
-          .catch(error => {
-            window.location.href = 'logout.php';
-          });
+        }, 1500);
       } else {
         showErrorMessage(data.message);
       }
@@ -178,23 +180,12 @@ function checkThemeNeedsUpdate() {
     darkThemeCss.disabled = themePreference === 'light';
     document.body.className = themePreference;
     const themeColorMetaTag = document.querySelector('meta[name="theme-color"]');
-    themeColorMetaTag.setAttribute('content', themePreference === 'dark' ? '#222222' : '#FFFFFF');
-  }
-}
-
-function enableGoToLoginButton() {
-  const goToLoginButton = document.getElementById('goToLoginButton');
-  if (goToLoginButton) {
-    goToLoginButton.addEventListener('click', function () {
-      window.location.href = 'login.php';
-    });
+    themeColorMetaTag.setAttribute('content', themePreference === 'dark' ? '#12151C' : '#FFFFFF');
   }
 }
 
 window.onload = function () {
   restoreFormFields();
   removeFromStorage();
-  runDatabaseMigration();
   checkThemeNeedsUpdate();
-  enableGoToLoginButton();
 };

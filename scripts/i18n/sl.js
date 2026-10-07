@@ -46,4 +46,12 @@ let i18n = {
   payment_method: "Način plačila",
   notes: "Opombe",
   export: "Izvozi",
+  invalid_budget: "Proračun mora biti nenegativno število",
+  invalid_budget_period: "Izbrano neveljavno proračunsko obdobje",
+  invalid_budget_anchor_date: "Izhodiščni datum mora biti veljaven datum",
+  no_results_found: "Ni najdenih rezultatov",
+  push_not_supported: "Potisna obvestila v tem brskalniku niso podprta.",
+  push_permission_denied: "Dovoljenje za obvestila ni bilo odobreno.",
+  delete: "Izbriši",
+  no_devices_registered: "Še ni registriranih naprav.",
 }

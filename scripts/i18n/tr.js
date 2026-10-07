@@ -46,6 +46,14 @@ let i18n = {
   payment_method: "Payment method",
   notes: "Notes",
   export: "Export",
+  invalid_budget: "Bütçe negatif olmayan bir sayı olmalıdır",
+  invalid_budget_period: "Geçersiz bütçe dönemi seçildi",
+  invalid_budget_anchor_date: "Referans tarih geçerli bir tarih olmalıdır",
+  no_results_found: "Sonuç bulunamadı",
+  push_not_supported: "Bu tarayıcıda push bildirimleri desteklenmiyor.",
+  push_permission_denied: "Bildirim izni verilmedi.",
+  delete: "Sil",
+  no_devices_registered: "Henüz kayıtlı cihaz yok.",
 }
 
 

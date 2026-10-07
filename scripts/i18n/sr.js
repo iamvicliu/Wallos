@@ -46,4 +46,12 @@ let i18n = {
   payment_method: "Метод плаћања",
   notes: "Белешке",
   export: "Извоз",
+  invalid_budget: "Буџет мора бити не-негативан број",
+  invalid_budget_period: "Изабран је неважећи период буџета",
+  invalid_budget_anchor_date: "Референтни датум мора бити важећи датум",
+  no_results_found: "Нема резултата",
+  push_not_supported: "Push обавештења нису подржана у овом прегледачу.",
+  push_permission_denied: "Дозвола за обавештења није одобрена.",
+  delete: "Обриши",
+  no_devices_registered: "Још увек нема регистрованих уређаја.",
 }

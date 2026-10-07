@@ -1,12 +1,14 @@
 <?php
 require_once 'includes/connect.php';
 require_once 'includes/checkuser.php';
+require_once 'includes/oidc_settings.php';
 
 require_once 'includes/i18n/languages.php';
 require_once 'includes/i18n/getlang.php';
 require_once 'includes/i18n/' . $lang . '.php';
 
 require_once 'includes/version.php';
+require_once 'includes/theme_helpers.php';
 
 if ($userCount == 0) {
     header("Location: registration.php");
@@ -58,6 +60,7 @@ if ($adminRow['login_disabled'] == 1) {
         $username = $row['username'];
         $language = $row['language'];
 
+        session_regenerate_id(true);
         $_SESSION['username'] = $username;
         $_SESSION['loggedin'] = true;
         $_SESSION['main_currency'] = $main_currency;
@@ -107,66 +110,60 @@ if (isset($_SESSION['token'])) {
 $theme = "light";
 $updateThemeSettings = false;
 if (isset($_COOKIE['theme'])) {
-    $theme = $_COOKIE['theme'];
+    $theme = sanitize_theme_mode($_COOKIE['theme']);
 } else {
     $updateThemeSettings = true;
 }
 
 $colorTheme = "blue";
 if (isset($_COOKIE['colorTheme'])) {
-    $colorTheme = $_COOKIE['colorTheme'];
+    $colorTheme = sanitize_color_theme($_COOKIE['colorTheme']);
 }
 
-// Check if OIDC is Enabled
+// Check if OIDC is enabled and resolve any environment overrides.
 $password_login_disabled = false;
 $oidcEnabled = false;
-$oidcQuery = "SELECT oidc_oauth_enabled FROM admin";
-$oidcResult = $db->query($oidcQuery);
-$oidcRow = $oidcResult->fetchArray(SQLITE3_ASSOC);
-if ($oidcRow) {
-    $oidcEnabled = $oidcRow['oidc_oauth_enabled'] == 1;
-    if ($oidcEnabled) {
-        // Fetch OIDC settings
-        $oidcSettingsQuery = "SELECT * FROM oauth_settings WHERE id = 1";
-        $oidcSettingsResult = $db->query($oidcSettingsQuery);
-        $oidcSettings = $oidcSettingsResult->fetchArray(SQLITE3_ASSOC);
-        if (!$oidcSettings) {
-            $oidcEnabled = false;
-        } else {
-            $oidc_name = $oidcSettings['name'] ?? '';
-            $password_login_disabled = $oidcSettings['password_login_disabled'] == 1;
+$oidcConfiguration = wallos_get_effective_oidc_configuration($db);
+$oidcEnabled = $oidcConfiguration['enabled'] == 1 && $oidcConfiguration['is_configured'];
+if ($oidcEnabled) {
+    $oidcSettings = $oidcConfiguration['settings'];
+    $oidc_name = $oidcSettings['name'] ?? '';
+    $password_login_disabled = (int) $oidcSettings['password_login_disabled'] === 1;
 
-            // Generate a CSRF-protecting state string
-            $secondsInMonth = 30 * 24 * 60 * 60;
-            if (session_status() === PHP_SESSION_NONE) {
-                session_set_cookie_params([
-                    'lifetime' => $secondsInMonth,             
-                    'httponly' => true,          
-                    'samesite' => 'Lax'          
-                ]);
-                session_start();
-            }
-            $state = bin2hex(random_bytes(16));
-            $_SESSION['oidc_state'] = $state;
-
-            // Build the OIDC authorization URL
-            $params = http_build_query([
-                'response_type' => 'code',
-                'client_id' => $oidcSettings['client_id'],
-                'redirect_uri' => $oidcSettings['redirect_url'],
-                'scope' => $oidcSettings['scopes'],
-                'state' => $state,
-            ]);
-
-            $oidc_auth_url = rtrim($oidcSettings['authorization_url'], '?') . '?' . $params;
-        }
+    // Generate a CSRF-protecting state string
+    $secondsInMonth = 30 * 24 * 60 * 60;
+    if (session_status() === PHP_SESSION_NONE) {
+        session_set_cookie_params([
+            'lifetime' => $secondsInMonth,
+            'httponly' => true,
+            'samesite' => 'Lax'
+        ]);
+        session_start();
     }
+    $state = bin2hex(random_bytes(16));
+    $_SESSION['oidc_state'] = $state;
+
+    // Build the OIDC authorization URL
+    $params = http_build_query([
+        'response_type' => 'code',
+        'client_id' => $oidcSettings['client_id'],
+        'redirect_uri' => $oidcSettings['redirect_url'],
+        'scope' => $oidcSettings['scopes'],
+        'state' => $state,
+    ]);
+
+    $oidc_auth_url = rtrim($oidcSettings['authorization_url'], '?') . '?' . $params;
 }
 
 $loginFailed = false;
 $hasSuccessMessage = (isset($_GET['validated']) && $_GET['validated'] == "true") || (isset($_GET['registered']) && $_GET['registered'] == true) ? true : false;
 $userEmailWaitingVerification = false;
-if (isset($_POST['username']) && isset($_POST['password'])) {
+$oidcEmailNotVerified = false;
+if (isset($_POST['username']) && isset($_POST['password']) && $password_login_disabled) {
+    // SSO-only is enforced here, not just by hiding the form: a direct POST
+    // must not be able to authenticate with a local password.
+    $loginFailed = true;
+} elseif (isset($_POST['username']) && isset($_POST['password'])) {
     $username = $_POST['username'];
     $password = $_POST['password'];
     $rememberMe = isset($_POST['remember']) ? true : false;
@@ -229,6 +226,7 @@ if (isset($_POST['username']) && isset($_POST['password'])) {
                     ]);
                 }
 
+                session_regenerate_id(true);
                 $_SESSION['username'] = $username;
                 $_SESSION['loggedin'] = true;
                 $_SESSION['main_currency'] = $main_currency;
@@ -272,9 +270,11 @@ if (isset($_POST['username']) && isset($_POST['password'])) {
 $registrations = false;
 $resetPasswordEnabled = false;
 if (!$password_login_disabled) {
-    $adminQuery = "SELECT registrations_open, max_users, server_url, smtp_address FROM admin";
-    $adminResult = $db->query($adminQuery);
-    $adminRow = $adminResult->fetchArray(SQLITE3_ASSOC);
+    // Through the instance configuration, so that a mail server the deployment
+    // owns offers the password reset link. Configured and invisible would be
+    // the worst of the three possible outcomes.
+    require_once 'includes/instance_config.php';
+    $adminRow = wallos_get_admin_settings($db);
     $registrationsOpen = $adminRow['registrations_open'];
     $maxUsers = $adminRow['max_users'];
 
@@ -296,8 +296,12 @@ if (!$password_login_disabled) {
 }
 
 
-if (isset($_GET['error']) && $_GET['error'] == "oidc_user_not_found") {
-    $loginFailed = true;
+if (isset($_GET['error'])) {
+    $oidcError = $_GET['error'];
+    if (in_array($oidcError, ["oidc_user_not_found", "oidc_invalid_state", "oidc_email_not_verified", "oidc_invalid_config"], true)) {
+        $loginFailed = true;
+        $oidcEmailNotVerified = $oidcError === "oidc_email_not_verified";
+    }
 }
 
 ?>
@@ -307,14 +311,14 @@ if (isset($_GET['error']) && $_GET['error'] == "oidc_user_not_found") {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#222222" ?>" id="theme-color" />
+    <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#12151C" ?>" id="theme-color" />
     <meta name="apple-mobile-web-app-title" content="Wallos">
     <title>Wallos - Subscription Tracker</title>
     <link rel="icon" type="image/png" href="images/icon/favicon.ico" sizes="16x16">
     <link rel="apple-touch-icon" href="images/icon/apple-touch-icon.png">
     <link rel="apple-touch-icon" sizes="152x152" href="images/icon/apple-touch-icon-152.png">
     <link rel="apple-touch-icon" sizes="180x180" href="images/icon/apple-touch-icon-180.png">
-    <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="manifest.php">
     <link rel="stylesheet" href="styles/theme.css?<?= $version ?>">
     <link rel="stylesheet" href="styles/login.css?<?= $version ?>">
     <link rel="stylesheet" href="styles/themes/red.css?<?= $version ?>" id="red-theme" <?= $colorTheme != "red" ? "disabled" : "" ?>>
@@ -326,13 +330,29 @@ if (isset($_GET['error']) && $_GET['error'] == "oidc_user_not_found") {
     <link rel="stylesheet" href="styles/login-dark-theme.css?<?= $version ?>" id="dark-theme" <?= $theme == "light" ? "disabled" : "" ?>>
     <script type="text/javascript">
         window.update_theme_settings = "<?= $updateThemeSettings ?>";
-        window.color_theme = "<?= $colorTheme ?>";
+        window.color_theme = <?= json_encode($colorTheme, JSON_HEX_TAG | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_APOS) ?>;
     </script>
     <script type="text/javascript" src="scripts/login.js?<?= $version ?>"></script>
+    <script type="text/javascript" src="scripts/auth-theme.js?<?= $version ?>"></script>
+    <script type="text/javascript" src="scripts/password-toggle.js?<?= $version ?>"></script>
 </head>
 
 <body class="<?= $languages[$lang]['dir'] ?>">
-    <div class="content">
+    <button type="button" class="theme-toggle" id="theme-toggle" title="<?= translate('theme', $i18n) ?>"
+        aria-label="<?= translate('theme', $i18n) ?>">
+        <i class="fa-solid <?= $theme == "dark" ? "fa-sun" : "fa-moon" ?>"></i>
+    </button>
+    <div class="content auth-split">
+        <aside class="auth-brand" aria-hidden="true">
+            <div class="auth-brand-logo">
+                <?php include "images/siteicons/svg/logo.php"; ?>
+            </div>
+            <div class="auth-brand-text">
+                <h1><?= translate('auth_tagline', $i18n) ?></h1>
+                <p><?= translate('auth_tagline_sub', $i18n) ?></p>
+            </div>
+            <div class="auth-brand-footer">Wallos &mdash; Subscription Tracker</div>
+        </aside>
         <section class="container">
             <header>
                 <div class="logo-image" title="Wallos - Subscription Tracker">
@@ -393,6 +413,10 @@ if (isset($_GET['error']) && $_GET['error'] == "oidc_user_not_found") {
                                     class="fa-solid fa-triangle-exclamation"></i><?= translate('user_email_waiting_verification', $i18n) ?>
                             </li>
                             <?php
+                        } elseif ($oidcEmailNotVerified) {
+                            ?>
+                            <li><i class="fa-solid fa-triangle-exclamation"></i><?= translate('oidc_email_not_verified', $i18n) ?></li>
+                            <?php
                         } else {
                             ?>
                             <li><i class="fa-solid fa-triangle-exclamation"></i><?= translate('login_failed', $i18n) ?></li>
@@ -436,9 +460,9 @@ if (isset($_GET['error']) && $_GET['error'] == "oidc_user_not_found") {
                 <?php
                 if ($registrations) {
                     ?>
-                    <div class="separator">
-                        <input type="button" class="secondary-button" onclick="openRegitrationPage()"
-                            value="<?= translate('register', $i18n) ?>"></input>
+                    <div class="login-form-link account-switch">
+                        <span><?= translate('no_account_yet', $i18n) ?></span>
+                        <a href="registration.php"><?= translate('register', $i18n) ?></a>
                     </div>
                     <?php
                 }
@@ -446,11 +470,6 @@ if (isset($_GET['error']) && $_GET['error'] == "oidc_user_not_found") {
             </form>
         </section>
     </div>
-    <script type="text/javascript">
-        function openRegitrationPage() {
-            window.location.href = "registration.php";
-        }
-    </script>
 </body>
 
 </html>

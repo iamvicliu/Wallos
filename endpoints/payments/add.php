@@ -75,7 +75,7 @@ function getLogoFromUrl($url, $uploadDir, $name, $i18n, $settings)
 
             if (saveLogo($imageData, $uploadFile, $name, $settings)) {
                 unset($ch);
-                return $fileName;
+                return ["success" => true, "filename" => $fileName];
             }
         }
 
@@ -96,31 +96,18 @@ function saveLogo($imageData, $uploadFile, $name, $settings)
         imagepng($image, $tempFile);
         imagedestroy($image);
 
-        if (extension_loaded('imagick')) {
-            $imagick = new Imagick($tempFile);
-            if ($removeBackground) {
-                $fuzz = Imagick::getQuantum() * 0.1; // 10%
-                $imagick->transparentPaintImage("rgb(247, 247, 247)", 0, $fuzz, false);
-            }
-            $imagick->setImageFormat('png');
-            $imagick->writeImage($uploadFile);
-
-            $imagick->clear();
-            $imagick->destroy();
-        } else {
-            // Alternative method if Imagick is not available
-            $newImage = imagecreatefrompng($tempFile);
-            if ($removeBackground) {
-                imagealphablending($newImage, false);
-                imagesavealpha($newImage, true);
-                $transparent = imagecolorallocatealpha($newImage, 0, 0, 0, 127);
-                imagefill($newImage, 0, 0, $transparent);  // Fill the entire image with transparency
-                imagepng($newImage, $uploadFile);
-                imagedestroy($newImage);
-            }
-            imagepng($newImage, $uploadFile);
-            imagedestroy($newImage);
+        $newImage = imagecreatefrompng($tempFile);
+        if ($removeBackground) {
+            require_once __DIR__ . '/../../includes/gd_background_removal.php';
+            // Paint out the near-white background with ~10% fuzz
+            gdRemoveBackgroundColor($newImage, 247, 247, 247);
         }
+        // Crop/trim transparent margins
+        require_once __DIR__ . '/../../includes/gd_background_removal.php';
+        $newImage = gdCropTransparent($newImage, 2);
+
+        imagepng($newImage, $uploadFile);
+        imagedestroy($newImage);
         unlink($tempFile);
 
         return true;
@@ -166,6 +153,12 @@ function resizeAndUploadLogo($uploadedFile, $uploadDir, $name)
             if ($fileExtension === 'png') {
                 imagesavealpha($image, true);
             }
+
+            // Crop/trim transparent margins (ensure we update dimensions after cropping)
+            require_once __DIR__ . '/../../includes/gd_background_removal.php';
+            $image = gdCropTransparent($image, 2);
+            $width = imagesx($image);
+            $height = imagesy($image);
 
             $newWidth = $width;
             $newHeight = $height;
@@ -224,7 +217,28 @@ if ($name === "" || ($iconUrl === "" && empty($_FILES['paymenticon']['name']))) 
 $icon = "";
 
 if ($iconUrl !== "") {
-    $icon = getLogoFromUrl($iconUrl, '../../images/uploads/logos/', $name, $i18n, $settings);
+    // getLogoFromUrl() reported failure as an array and success as a bare
+    // string, and neither the caller nor the bind below looked. The array went
+    // into the icon column, the insert failed, and this endpoint answered with
+    // a plain-text error the page cannot read, so the user saw "Unknown
+    // error, please try again" while the reason the helper had already worked
+    // out was thrown away, and error_reporting above kept the warning out of
+    // the log (closes #1185).
+    //
+    // Both subscription copies of this helper already answer
+    // ['success' => bool, 'filename'|'message'] and are checked at the call
+    // site; this is that shape.
+    $result = getLogoFromUrl($iconUrl, '../../images/uploads/logos/', $name, $i18n, $settings);
+
+    if (empty($result['success'])) {
+        echo json_encode([
+            "success" => false,
+            "message" => $result['message'] ?? translate('error', $i18n)
+        ]);
+        exit();
+    }
+
+    $icon = $result['filename'];
 } else {
     if (!empty($_FILES['paymenticon']['name'])) {
         $fileType = mime_content_type($_FILES['paymenticon']['tmp_name']);

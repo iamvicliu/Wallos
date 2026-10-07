@@ -46,4 +46,12 @@ let i18n = {
   payment_method: ",Metoda de plată",
   notes: "Notițe",
   export: "Export",
+  invalid_budget: "Bugetul trebuie să fie un număr nenegativ",
+  invalid_budget_period: "Perioadă de buget selectată nevalidă",
+  invalid_budget_anchor_date: "Data de referință trebuie să fie o dată validă",
+  no_results_found: "Nu s-au găsit rezultate",
+  push_not_supported: "Notificările push nu sunt acceptate în acest browser.",
+  push_permission_denied: "Permisiunea pentru notificări nu a fost acordată.",
+  delete: "Șterge",
+  no_devices_registered: "Niciun dispozitiv înregistrat încă.",
 }

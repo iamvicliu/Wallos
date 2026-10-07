@@ -62,11 +62,22 @@ function resetForm() {
   deleteButton.removeAttribute("onClick");
 }
 
+// Picks the logo filename that reads well on the theme currently in use,
+// falling back to the original when there's no themed variant for it.
+function logoFilenameForCurrentTheme(subscription) {
+  if (!subscription.logo_text_color || !subscription.logo_variant) {
+    return subscription.logo;
+  }
+  const nativeTheme = subscription.logo_text_color === 'dark' ? 'light' : 'dark';
+  const currentTheme = document.body.classList.contains('dark') ? 'dark' : 'light';
+  return currentTheme === nativeTheme ? subscription.logo : subscription.logo_variant;
+}
+
 function fillEditFormFields(subscription) {
   const formTitle = document.querySelector("#form-title");
   formTitle.textContent = translate('edit_subscription');
   const logo = document.querySelector("#form-logo");
-  const logoFile = subscription.logo !== null ? "images/uploads/logos/" + subscription.logo : "";
+  const logoFile = subscription.logo !== null ? "images/uploads/logos/" + logoFilenameForCurrentTheme(subscription) : "";
   if (logoFile) {
     logo.src = logoFile;
     logo.style = 'display: block';
@@ -234,6 +245,7 @@ function deleteSubscription(event, id) {
         showSuccessMessage(translate('subscription_deleted'));
         fetchSubscriptions(null, null, "delete");
         closeAddSubscription();
+        closeSubscriptionDetails();
       } else {
         showErrorMessage(data.message || translate('error_deleting_subscription'));
       }
@@ -327,49 +339,196 @@ function setSearchButtonStatus() {
 function searchLogo() {
   const nameInput = document.querySelector("#name");
   const searchTerm = nameInput.value.trim();
-  if (searchTerm !== "") {
-    const logoSearchPopup = document.querySelector("#logo-search-results");
-    logoSearchPopup.classList.add("is-open");
-    const imageSearchUrl = `endpoints/logos/search.php?search=${searchTerm}`;
-    fetch(imageSearchUrl)
-      .then(response => response.json())
+  if (searchTerm === "") {
+    nameInput.focus();
+    return;
+  }
+
+  const logoSearchPopup = document.querySelector("#logo-search-results");
+  const logoResults = document.querySelector("#logo-search-images");
+  const logoNav = document.querySelector("#logo-search-nav");
+  const logoSearchBackdrop = document.querySelector("#logo-search-backdrop");
+  logoSearchPopup.classList.add("is-open");
+  if (logoSearchBackdrop) {
+    logoSearchBackdrop.classList.add("is-open");
+  }
+  const subscriptionForm = document.querySelector("#subscription-form");
+  if (subscriptionForm) {
+    subscriptionForm.classList.add("scroll-locked");
+  }
+
+  const queryInput = document.querySelector("#logo-search-query");
+  queryInput.value = searchTerm;
+
+  runLogoSearch(searchTerm);
+}
+
+function submitLogoSearch() {
+  const queryInput = document.querySelector("#logo-search-query");
+  const searchTerm = queryInput.value.trim();
+  if (searchTerm === "") {
+    queryInput.focus();
+    return;
+  }
+
+  runLogoSearch(searchTerm);
+}
+
+const logoSearchQueryInput = document.querySelector("#logo-search-query");
+const logoSearchSubmitButton = document.querySelector("#logo-search-submit");
+
+if (logoSearchQueryInput && logoSearchSubmitButton) {
+  logoSearchSubmitButton.addEventListener("click", submitLogoSearch);
+  logoSearchQueryInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitLogoSearch();
+    }
+  });
+}
+
+function runLogoSearch(searchTerm) {
+  const logoSearchPopup = document.querySelector("#logo-search-results");
+  const logoResults = document.querySelector("#logo-search-images");
+  const logoNav = document.querySelector("#logo-search-nav");
+  const logoSearchTitle = document.querySelector("#logo-search-title");
+  if (logoSearchTitle) {
+    const baseTitle = logoSearchTitle.dataset.title;
+    logoSearchTitle.textContent = `${baseTitle}: ${searchTerm}`;
+  }
+
+  // One section per source, queried in parallel and filled as each response lands
+  const encodedSearchTerm = encodeURIComponent(searchTerm);
+  const sources = [
+    { label: 'selfh.st', url: `endpoints/logos/icon_search.php?search=${encodedSearchTerm}&source=selfhst` },
+    { label: 'Dashboard Icons', url: `endpoints/logos/icon_search.php?search=${encodedSearchTerm}&source=dashboardicons` },
+    { label: 'DuckDuckGo', url: `endpoints/logos/search.php?search=${encodedSearchTerm}&source=duckduckgo` },
+    { label: 'Brave', url: `endpoints/logos/search.php?search=${encodedSearchTerm}&source=brave` },
+  ];
+
+  // Google requires user-provided API credentials; the section only exists when configured
+  if (logoSearchPopup.dataset.googleSearch) {
+    sources.unshift({ label: 'Google', url: `endpoints/logos/google_search.php?search=${encodedSearchTerm}` });
+  }
+
+  logoResults.innerHTML = "";
+  if (logoNav) {
+    logoNav.innerHTML = "";
+  }
+
+  sources.forEach(source => {
+    const section = document.createElement("div");
+    section.className = "logo-search-section";
+
+    const title = document.createElement("h4");
+    title.textContent = source.label;
+    section.appendChild(title);
+
+    const resultsContainer = document.createElement("div");
+    resultsContainer.className = "logo-search-section-results";
+    section.appendChild(resultsContainer);
+
+    logoResults.appendChild(section);
+    showSearchState(resultsContainer, 'loading');
+
+    if (logoNav) {
+      const navItem = document.createElement("button");
+      navItem.type = "button";
+      navItem.className = "logo-search-nav-item";
+      navItem.textContent = source.label;
+      navItem.onclick = function () {
+        const targetTop = section.getBoundingClientRect().top - logoResults.getBoundingClientRect().top + logoResults.scrollTop;
+        logoResults.scrollTo({ top: targetTop, behavior: 'smooth' });
+      };
+      logoNav.appendChild(navItem);
+    }
+
+    fetchLogoSearchSource(source.url)
       .then(data => {
-        if (data.results) {
-          displayImageResults(data.results);
+        if (data.results && data.results.length > 0) {
+          displayImageResults(data.results, resultsContainer);
         } else if (data.error) {
-          console.error(data.error);
+          console.error(source.label, data.error);
+          showSearchState(resultsContainer, 'error');
+        } else {
+          showSearchState(resultsContainer, 'empty');
         }
       })
       .catch(error => {
-        console.error(translate('error_fetching_image_results'), error);
+        console.error(translate('error_fetching_image_results'), source.label, error);
+        showSearchState(resultsContainer, 'error');
       });
-  } else {
-    nameInput.focus();
-  }
+  });
 }
 
-function displayImageResults(imageSources) {
-  const logoResults = document.querySelector("#logo-search-images");
-  logoResults.innerHTML = "";
+function fetchLogoSearchSource(url, retry = true) {
+  return fetch(url, {
+    cache: "no-store",
+    headers: { "Accept": "application/json" },
+  })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.text();
+    })
+    .then(body => {
+      try {
+        return JSON.parse(body);
+      } catch (error) {
+        throw new Error("Invalid JSON response");
+      }
+    })
+    .catch(error => {
+      if (retry) {
+        // Wait a moment before retrying: sources like Brave rate-limit
+        // aggressively, and retrying instantly just repeats the failure.
+        return new Promise(resolve => setTimeout(resolve, 600))
+          .then(() => fetchLogoSearchSource(url, false));
+      }
+      throw error;
+    });
+}
+
+function displayImageResults(imageSources, container) {
+  container.innerHTML = "";
 
   imageSources.forEach(src => {
     const img = document.createElement("img");
     img.src = src.thumbnail || src.image;
     img.onclick = function () {
-      selectWebLogo(src.thumbnail || src.image);
+      const selectedUrl = getSupportedLogoUrl(src);
+      if (selectedUrl) {
+        selectWebLogo(selectedUrl, img.src);
+      }
     };
     img.onerror = function () {
       this.parentNode.removeChild(this);
     };
-    logoResults.appendChild(img);
+    container.appendChild(img);
   });
 }
 
-function selectWebLogo(url) {
+function getSupportedLogoUrl(source) {
+  if (source.image) {
+    try {
+      const imagePath = new URL(source.image, window.location.href).pathname.toLowerCase();
+      if (/\.(png|jpe?g|gif|webp)$/.test(imagePath)) {
+        return source.image;
+      }
+    } catch (error) {
+      // Fall through to the raster thumbnail for malformed source URLs.
+    }
+  }
+
+  return source.thumbnail || "";
+}
+
+function selectWebLogo(url, previewUrl = url) {
   closeLogoSearch();
   const logoPreview = document.querySelector("#form-logo");
   const logoUrl = document.querySelector("#logo-url");
-  logoPreview.src = url;
+  logoPreview.src = previewUrl;
   logoPreview.style.display = 'block';
   logoUrl.value = url;
 }
@@ -377,6 +536,18 @@ function selectWebLogo(url) {
 function closeLogoSearch() {
   const logoSearchPopup = document.querySelector("#logo-search-results");
   logoSearchPopup.classList.remove("is-open");
+  const logoSearchBackdrop = document.querySelector("#logo-search-backdrop");
+  if (logoSearchBackdrop) {
+    logoSearchBackdrop.classList.remove("is-open");
+  }
+  const subscriptionForm = document.querySelector("#subscription-form");
+  if (subscriptionForm) {
+    subscriptionForm.classList.remove("scroll-locked");
+  }
+  const logoSearchTitle = document.querySelector("#logo-search-title");
+  if (logoSearchTitle) {
+    logoSearchTitle.textContent = logoSearchTitle.dataset.title;
+  }
   const logoResults = document.querySelector("#logo-search-images");
   logoResults.innerHTML = "";
 }
@@ -429,10 +600,28 @@ function fetchSubscriptions(id, event, initiator) {
           }, 1000);
         }
       }
+      searchSubscriptions();
     })
     .catch(error => {
       console.error(translate('error_reloading_subscription'), error);
     });
+}
+
+function setSubscriptionsView(view) {
+  const subscriptionsContainer = document.querySelector("#subscriptions");
+  subscriptionsContainer.classList.toggle("grid-view", view === "grid");
+  document.querySelectorAll('.subscription').forEach((card) => {
+    setCardFlipped(card, false);
+    card.style.transform = '';
+    card.style.transition = '';
+    card.style.zIndex = '';
+  });
+  document.querySelector("#view-list-button").classList.toggle("selected", view !== "grid");
+  document.querySelector("#view-grid-button").classList.toggle("selected", view === "grid");
+
+  const expirationDate = new Date();
+  expirationDate.setFullYear(expirationDate.getFullYear() + 1);
+  document.cookie = "subscriptionsView=" + view + "; expires=" + expirationDate.toUTCString() + "; SameSite=Lax";
 }
 
 function setSortOption(sortOption) {
@@ -501,6 +690,9 @@ function submitFormData(formData, submitButton, endpoint) {
     .then((data) => {
       if (data.status === "Success") {
         showSuccessMessage(data.message);
+        if (data.logo_warning) {
+          showErrorMessage(data.logo_warning);
+        }
         fetchSubscriptions(null, null, "add");
         closeAddSubscription();
       } else {
@@ -601,7 +793,15 @@ function clearSearch() {
   const searchInput = document.querySelector("#search");
 
   searchInput.value = "";
+  searchInput.parentElement.classList.remove("mobile-expanded");
   searchSubscriptions();
+}
+
+function toggleMobileSearch() {
+  const searchContainer = document.querySelector(".top-actions .search");
+
+  searchContainer.classList.add("mobile-expanded");
+  document.querySelector("#search").focus();
 }
 
 function closeSubMenus() {
@@ -625,12 +825,14 @@ function setSwipeElements() {
       const maxTranslateX = element.classList.contains('manual') ? -240 : -180;
 
       element.addEventListener('touchstart', (e) => {
+        if (element.closest('.subscriptions.grid-view')) return; // no swipe actions in grid view
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
         element.style.transition = ''; // Remove transition for smooth dragging
       });
 
       element.addEventListener('touchmove', (e) => {
+        if (element.closest('.subscriptions.grid-view')) return;
         currentX = e.touches[0].clientX;
         currentY = e.touches[0].clientY;
 
@@ -650,6 +852,7 @@ function setSwipeElements() {
       });
 
       element.addEventListener('touchend', () => {
+        if (element.closest('.subscriptions.grid-view')) return;
         // Check the final swipe position to determine snap behavior
         if (translateX < maxTranslateX / 2) {
           // If more than halfway to the left, snap fully open
@@ -831,10 +1034,46 @@ document.addEventListener('click', function (event) {
   }
 });
 
+// A flipped card shows its back face via a CSS 3D transform while the front
+// stays in the DOM (and vice versa when unflipped) -- backface-visibility
+// only hides a face visually, it doesn't remove it from the tab order. The
+// `inert` attribute is what actually keeps focus (and assistive tech) out of
+// whichever face is currently turned away from the user.
+function setCardFlipped(card, flipped) {
+  card.classList.toggle('flipped', flipped);
+  const back = card.querySelector('.subscription-back');
+  const front = card.querySelector('.subscription-main');
+  if (back) {
+    back.inert = !flipped;
+  }
+  if (front) {
+    front.inert = flipped;
+  }
+}
+
+function unflipCard(subscriptionId) {
+  const card = document.querySelector(`.subscription[data-id="${subscriptionId}"]`);
+  if (card) {
+    setCardFlipped(card, false);
+  }
+}
+
 function expandActions(event, subscriptionId) {
   event.stopPropagation();
   event.preventDefault();
   const subscriptionDiv = document.querySelector(`.subscription[data-id="${subscriptionId}"]`);
+
+  // Grid view: flip the card over instead of opening the dropdown
+  if (subscriptionDiv.closest('.subscriptions.grid-view')) {
+    document.querySelectorAll('.subscription.flipped').forEach((card) => {
+      if (card !== subscriptionDiv) {
+        setCardFlipped(card, false);
+      }
+    });
+    setCardFlipped(subscriptionDiv, !subscriptionDiv.classList.contains('flipped'));
+    return;
+  }
+
   const actions = subscriptionDiv.querySelector('.actions');
 
   // Close all other open actions
@@ -863,27 +1102,33 @@ function expandActions(event, subscriptionId) {
 }
 
 function swipeHintAnimation() {
-  if (window.mobileNavigation && window.matchMedia('(max-width: 768px)').matches) {
-    const maxAnimations = 3;
-    const cookieName = 'swipeHintCount';
-
-    let count = parseInt(getCookie(cookieName)) || 0;
-    if (count < maxAnimations) {
-      const firstElement = document.querySelector('.subscription');
-      if (firstElement) {
-        firstElement.style.transition = 'transform 0.3s ease';
-        firstElement.style.transform = 'translateX(-80px)';
-
-        setTimeout(() => {
-          firstElement.style.transform = 'translateX(0px)';
-          firstElement.style.zIndex = '1';
-        }, 600);
-      }
-
-      count++;
-      document.cookie = `${cookieName}=${count}; expires=Fri, 31 Dec 9999 23:59:59 GMT; path=/; SameSite=Lax`;
-    }
+  // The swipe hint only exists in list view: no swipe actions in grid view.
+  if (!window.mobileNavigation || !window.matchMedia('(max-width: 768px)').matches) {
+    return;
   }
+
+  const firstElement = document.querySelector('.subscription');
+  if (!firstElement || firstElement.closest('.subscriptions.grid-view')) {
+    return;
+  }
+
+  const maxAnimations = 3;
+  const cookieName = 'swipeHintCount';
+  let count = parseInt(getCookie(cookieName)) || 0;
+  if (count >= maxAnimations) {
+    return;
+  }
+
+  firstElement.style.transition = 'transform 0.3s ease';
+  firstElement.style.transform = 'translateX(-80px)';
+
+  setTimeout(() => {
+    firstElement.style.transform = 'translateX(0px)';
+    firstElement.style.zIndex = '1';
+  }, 600);
+
+  count++;
+  document.cookie = `${cookieName}=${count}; expires=Fri, 31 Dec 9999 23:59:59 GMT; path=/; SameSite=Lax`;
 }
 
 function toggleOneTimeCycleUI(isOneTime) {
@@ -982,6 +1227,42 @@ function toISOStringWithTimezone(date) {
     ':' + pad(date.getSeconds()) +
     sign + hoursOffset +
     ':' + minutesOffset;
+}
+
+function insertMarkdownSyntax(textarea, prefix, suffix, placeholder) {
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const selected = textarea.value.slice(start, end) || placeholder;
+
+  textarea.setRangeText(prefix + selected + suffix, start, end, 'select');
+  textarea.focus();
+  textarea.setSelectionRange(start + prefix.length, start + prefix.length + selected.length);
+}
+
+function applyNotesMarkdown(action) {
+  const textarea = document.querySelector('#notes');
+  if (!textarea) {
+    return;
+  }
+
+  switch (action) {
+    case 'bold':
+      insertMarkdownSyntax(textarea, '**', '**', translate('notes_bold'));
+      break;
+    case 'italic':
+      insertMarkdownSyntax(textarea, '_', '_', translate('notes_italic'));
+      break;
+    case 'list': {
+      const start = textarea.selectionStart;
+      const lineStart = textarea.value.lastIndexOf('\n', start - 1) + 1;
+      textarea.setRangeText('- ', lineStart, lineStart, 'end');
+      textarea.focus();
+      break;
+    }
+    case 'link':
+      insertMarkdownSyntax(textarea, '[', '](https://)', translate('notes_link'));
+      break;
+  }
 }
 
 window.addEventListener('load', () => {

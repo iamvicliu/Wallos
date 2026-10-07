@@ -85,13 +85,13 @@ $mobileNavigation = $settings['mobile_nav'] ? "mobile-navigation" : "";
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Wallos - Subscription Tracker</title>
   <meta name="apple-mobile-web-app-title" content="Wallos">
-  <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#222222" ?>" id="theme-color" />
+  <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#12151C" ?>" id="theme-color" />
   <meta name="referrer" content="no-referrer">
   <link rel="icon" type="image/png" href="images/icon/favicon.ico" sizes="16x16">
   <link rel="apple-touch-icon" href="images/icon/apple-touch-icon.png">
   <link rel="apple-touch-icon" sizes="152x152" href="images/icon/apple-touch-icon-152.png">
   <link rel="apple-touch-icon" sizes="180x180" href="images/icon/apple-touch-icon-180.png">
-  <link rel="manifest" href="manifest.json" crossorigin="use-credentials">
+  <link rel="manifest" href="manifest.php" crossorigin="use-credentials">
   <link rel="stylesheet" href="styles/theme.css?<?= $version ?>">
   <link rel="stylesheet" href="styles/styles.css?<?= $version ?>">
   <link rel="stylesheet" href="styles/dark-theme.css?<?= $version ?>" id="dark-theme" <?= $theme != "dark" ? "disabled" : "" ?>>
@@ -105,10 +105,10 @@ $mobileNavigation = $settings['mobile_nav'] ? "mobile-navigation" : "";
   <script type="text/javascript" src="scripts/all.js?<?= $version ?>"></script>
   <script type="text/javascript" src="scripts/common.js?<?= $version ?>"></script>
   <script type="text/javascript">
-    window.theme = "<?= $theme ?>";
+    window.theme = <?= json_encode($theme, JSON_HEX_TAG | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_APOS) ?>;
     window.update_theme_settings = "<?= $updateThemeSettings ?>";
     window.lang = "<?= $lang ?>";
-    window.colorTheme = "<?= $colorTheme ?>";
+    window.colorTheme = <?= json_encode($colorTheme, JSON_HEX_TAG | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_APOS) ?>;
     window.mobileNavigation = "<?= $settings['mobileNavigation'] == "true" ?>";
     window.defaultAutoRenew = <?= ($settings['defaultAutoRenew'] ?? 'true') === 'true' ? 'true' : 'false' ?>;
     window.defaultNotifications = <?= ($settings['defaultNotifications'] ?? 'true') === 'true' ? 'true' : 'false' ?>;
@@ -153,6 +153,7 @@ $mobileNavigation = $settings['mobile_nav'] ? "mobile-navigation" : "";
   ?>
   <script type="text/javascript" src="scripts/i18n/<?= $lang ?>.js?<?= $version ?>"></script>
   <script type="text/javascript" src="scripts/i18n/getlang.js?<?= $version ?>"></script>
+  <script type="text/javascript" src="scripts/password-toggle.js?<?= $version ?>"></script>
   <script>
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       if (!sessionStorage.getItem('sw_prefetched')) {

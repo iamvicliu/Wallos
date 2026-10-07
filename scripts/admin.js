@@ -102,28 +102,33 @@ function backupDB() {
       "X-CSRF-Token": window.csrfToken,
     },
   })
-    .then(response => response.json())
-    .then(data => {
-      if (data.success) {
-        const link = document.createElement("a");
-        const filename = data.file;
-        link.href = ".tmp/" + filename;
-
-        const date = new Date();
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        const day = String(date.getDate()).padStart(2, "0");
-        const hours = String(date.getHours()).padStart(2, "0");
-        const minutes = String(date.getMinutes()).padStart(2, "0");
-        const timestamp = `${year}${month}${day}-${hours}${minutes}`;
-        link.download = `Wallos-Backup-${timestamp}.zip`;
-
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
+    .then(async response => {
+      const contentType = response.headers.get("content-type") || "";
+      // Success streams the zip; any failure returns a JSON error body.
+      if (!response.ok || !contentType.includes("application/zip")) {
+        const data = await response.json().catch(() => ({}));
         showErrorMessage(data.message || translate("backup_failed"));
+        return;
       }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      const hours = String(date.getHours()).padStart(2, "0");
+      const minutes = String(date.getMinutes()).padStart(2, "0");
+      const timestamp = `${year}${month}${day}-${hours}${minutes}`;
+      link.download = `Wallos-Backup-${timestamp}.zip`;
+
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     })
     .catch(error => {
       console.error(error);
@@ -234,9 +239,11 @@ function saveSecuritySettingsButton() {
   button.disabled = true;
 
   const allowlist = document.getElementById('local_webhook_notifications_allowlist').value;
+  const allowStandardUsers = document.getElementById('allow_standard_users_local_webhooks').checked;
 
   const data = {
-    local_webhook_notifications_allowlist: allowlist
+    local_webhook_notifications_allowlist: allowlist,
+    allow_standard_users_local_webhooks: allowStandardUsers
   };
 
   fetch('endpoints/admin/savesecuritysettings.php', {
@@ -459,6 +466,7 @@ function saveOidcSettingsButton() {
   const oidcAuthStyle = document.getElementById("oidcAuthStyle").value;
   const oidcAutoCreateUser = document.getElementById("oidcAutoCreateUser").checked ? 1 : 0;
   const oidcPasswordLoginDisabled = document.getElementById("oidcPasswordLoginDisabled").checked ? 1 : 0;
+  const oidcRequireEmailVerified = document.getElementById("oidcRequireEmailVerified").checked ? 1 : 0;
 
   const data = {
     oidcName: oidcName,
@@ -473,7 +481,8 @@ function saveOidcSettingsButton() {
     oidcScopes: oidcScopes,
     oidcAuthStyle: oidcAuthStyle,
     oidcAutoCreateUser: oidcAutoCreateUser,
-    oidcPasswordLoginDisabled: oidcPasswordLoginDisabled
+    oidcPasswordLoginDisabled: oidcPasswordLoginDisabled,
+    oidcRequireEmailVerified: oidcRequireEmailVerified
   };
 
 

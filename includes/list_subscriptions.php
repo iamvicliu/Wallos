@@ -1,6 +1,7 @@
 <?php
 
 require_once 'i18n/getlang.php';
+require_once __DIR__ . '/currency_rates.php';
 
 function getBillingCycle($cycle, $frequency, $i18n)
 {
@@ -25,7 +26,7 @@ function getSubscriptionProgress($cycle, $frequency, $next_payment)
     }
 
     $nextPaymentDate = new DateTime($next_payment);
-    $currentDate = new DateTime('now');
+    $currentDate = new DateTime((new DateTime('now'))->format('Y-m-d'));
 
     $paymentCycleDays = 30; // Default to monthly
     if ($cycle === 1) {
@@ -38,16 +39,25 @@ function getSubscriptionProgress($cycle, $frequency, $next_payment)
         $paymentCycleDays = 365 * $frequency;
     }
 
-    $lastPaymentDate = clone $nextPaymentDate;
-    $lastPaymentDate->modify("-$paymentCycleDays days");
-
-    $totalCycleDays = $lastPaymentDate->diff($nextPaymentDate)->days;
-    $daysSinceLastPayment = $lastPaymentDate->diff($currentDate)->days;
-
-    $subscriptionProgress = 0;
-    if ($totalCycleDays > 0) {
-        $subscriptionProgress = ($daysSinceLastPayment / $totalCycleDays) * 100;
+    if ($paymentCycleDays <= 0) {
+        return 0;
     }
+
+    // next_payment can be many cycles away from today (a stale value, or
+    // several missed renewal runs), so we can't always assume it's within a
+    // single cycle of "now". Walk back however many whole cycles are needed
+    // so the window we measure progress against is the one that actually
+    // contains today.
+    $daysUntilNextPayment = $currentDate->diff($nextPaymentDate)->days;
+    $cyclesBack = $currentDate <= $nextPaymentDate
+        ? max(1, (int) ceil($daysUntilNextPayment / $paymentCycleDays))
+        : 1;
+
+    $lastPaymentDate = clone $nextPaymentDate;
+    $lastPaymentDate->modify('-' . ($cyclesBack * $paymentCycleDays) . ' days');
+
+    $daysSinceLastPayment = $lastPaymentDate->diff($currentDate)->days;
+    $subscriptionProgress = ($daysSinceLastPayment / $paymentCycleDays) * 100;
 
     return floor($subscriptionProgress);
 }
@@ -75,18 +85,7 @@ function getPricePerMonth($cycle, $frequency, $price)
 
 function getPriceConverted($price, $currency, $database)
 {
-    $query = "SELECT rate FROM currencies WHERE id = :currency";
-    $stmt = $database->prepare($query);
-    $stmt->bindParam(':currency', $currency, SQLITE3_INTEGER);
-    $result = $stmt->execute();
-
-    $exchangeRate = $result->fetchArray(SQLITE3_ASSOC);
-    if ($exchangeRate === false) {
-        return $price;
-    } else {
-        $fromRate = $exchangeRate['rate'];
-        return $price / $fromRate;
-    }
+    return wallos_convert_price($price, $currency, $database);
 }
 
 function formatPrice($price, $currencyCode, $currencies)
@@ -262,15 +261,13 @@ function printSubscriptions($subscriptions, $sort, $categories, $members, $i18n,
             </label>
 
             <div class="subscription<?= $subscriptionExtraClasses ?>"
-                onClick="toggleOpenSubscription(<?= $subscription['id'] ?>)" data-id="<?= $subscription['id'] ?>"
+                onClick="showSubscriptionDetails(event, <?= $subscription['id'] ?>)" data-id="<?= $subscription['id'] ?>"
                 data-name="<?= $subscription['name'] ?>">
                 <div class="subscription-main">
                     <span class="logo <?= !$hasLogo ? 'hideOnMobile' : '' ?>">
                         <?php
                         if ($hasLogo) {
-                            ?>
-                            <img src="<?= $subscription['logo'] ?>">
-                            <?php
+                            echo renderThemedLogoImg($subscription['logo'], $subscription['logo_variant'] ?? null, $subscription['logo_text_color'] ?? null);
                         } else {
                             include $imagePath . "images/siteicons/svg/logo.php";
                         }
@@ -358,41 +355,42 @@ function printSubscriptions($subscriptions, $sort, $categories, $members, $i18n,
                         ?>
                     </ul>
                 </div>
-                <div class="subscription-secondary">
-                    <span
-                        class="name"><i class="fa-solid fa-tag"></i><?= $subscription['name'] ?></span>
-                    <span class="payer_user"
-                        title="<?= translate('paid_by', $i18n) ?>"><i class="fa-solid fa-wallet"></i><?= $members[$subscription['payer_user_id']]['name'] ?></span>
-                    <span class="category"
-                        title="<?= translate('category', $i18n) ?>"><i class="fa-solid fa-layer-group"></i><?= $categories[$subscription['category_id']]['name'] ?></span>
+                <div class="subscription-back" inert>
+                    <button type="button" class="subscription-back-close"
+                        onClick="event.stopPropagation(); unflipCard(<?= $subscription['id'] ?>)"
+                        title="<?= translate('cancel', $i18n) ?>">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                    <button type="button" class="back-action"
+                        onClick="unflipCard(<?= $subscription['id'] ?>); openEditSubscription(event, <?= $subscription['id'] ?>)">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <?= translate('edit_subscription', $i18n) ?>
+                    </button>
+                    <button type="button" class="back-action"
+                        onClick="unflipCard(<?= $subscription['id'] ?>); cloneSubscription(event, <?= $subscription['id'] ?>)">
+                        <i class="fa-solid fa-copy"></i>
+                        <?= translate('clone', $i18n) ?>
+                    </button>
                     <?php
-                    if ($subscription['url'] != "") {
-                        $url = $subscription['url'];
-                        if (!preg_match('/^https?:\/\//', $url)) {
-                            $url = "https://" . $url;
-                        }
+                    if ($subscription['auto_renew'] != 1 && !$subscription['one_time']) {
                         ?>
-                        <span class="url" title="<?= translate('external_url', $i18n) ?>"><a href="<?= $url ?>" target="_blank"
-                                rel="noreferrer"><i class="fa-solid fa-globe"></i></a></span>
+                        <button type="button" class="back-action"
+                            onClick="unflipCard(<?= $subscription['id'] ?>); renewSubscription(event, <?= $subscription['id'] ?>)">
+                            <i class="fa-solid fa-rotate-right"></i>
+                            <?= translate('renew', $i18n) ?>
+                        </button>
                         <?php
                     }
                     ?>
+                    <button type="button" class="back-action delete"
+                        onClick="unflipCard(<?= $subscription['id'] ?>); deleteSubscription(event, <?= $subscription['id'] ?>)">
+                        <i class="fa-solid fa-trash-can"></i>
+                        <?= translate('delete', $i18n) ?>
+                    </button>
                 </div>
-                <?php
-                if ($subscription['notes'] != "") {
-                    ?>
-                    <div class="subscription-notes">
-                        <span class="notes">
-                            <i class="fa-solid fa-note-sticky"></i>
-                            <?= $subscription['notes'] ?>
-                        </span>
-                    </div>
-                    <?php
-                }
-                ?>
             </div>
             <?php
-            if ($showSubscriptionProgress === 'true') {
+            if ($showSubscriptionProgress === 'true' && !$subscription['inactive']) {
                 $progress = $subscription['progress'] > 100 ? 100 : $subscription['progress'];
                 ?>
                 <div class="subscription-progress-container">
