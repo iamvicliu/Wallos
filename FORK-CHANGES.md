@@ -24,7 +24,7 @@
 ## 一、合并上游新版本的流程
 
 ```bash
-cd /Users/vicliu/Github/Wallos
+cd <本仓库根目录>
 git fetch origin
 git log --oneline -1 origin/main          # 确认上游新版本号
 
@@ -192,15 +192,86 @@ DELETE FROM migrations WHERE migration = 'migrations/000047.php';
 
 ---
 
-## 五、部署注意
+## 五、部署
 
-1. **镜像要从本 fork 构建**，不要用 `bellamy/wallos:latest` —— 否则 Watchtower
-   会把容器拉回官方镜像，所有自用功能被冲掉（2026-10 已发生过一次）。
-2. **把 wallos 容器排除出 Watchtower**，改为手动 `git fetch origin && git merge` 升级。
-3. 线上数据在 `/home/ubuntu/wallos/`（`db/wallos.db` + `logos/`），部署时**只换代码，别动数据目录**。
-4. 汇率刷新：容器内 `startup.sh` 会 `crontab -d -u root` 删掉自己的定时任务，
-   **只在容器启动时**跑一次 `endpoints/cronjobs/updateexchange.php`。
-   要每日自动更新汇率，得在**宿主机**加 cron。
+**线上位置**：一台 arm64（aarch64）服务器，`ssh -i <SSH 密钥> ubuntu@<部署服务器>`，命令前加 `sudo docker`。服务器地址与密钥只记在本地，不进仓库。
+数据在 `/home/ubuntu/wallos/`（`db/wallos.db` + `logos/`），**只 bind mount 这两个目录**，
+**部署只换代码，别动数据目录**。入口 `https://<Wallos 域名>` → Cloudflare → nginx `wallet.conf` → `127.0.0.1:8282`。
+
+> 2026-10-08 从旧的 x86_64 服务器整体迁到 arm：旧服务器上的 `wallos`(fork 镜像)/
+> `wallos-old`(官方镜像) 容器都已停止但**保留**，数据也在，是整体退回的现成退路。
+> 注意线上是 aarch64，**镜像必须在部署服务器本机构建**（旧服务器那份 x86_64 用不了）。
+
+### 镜像怎么构建
+
+用仓库根目录的 **`Dockerfile.fork`**（在官方镜像上叠应用层），**不是**官方那个 `Dockerfile`。
+原因：服务器只有 954MB 内存 / 2 核，官方 Dockerfile 要编译 `intl`(ICU) 等扩展，容易 OOM；
+而本 fork 只改应用层文件，叠一层结果等价。
+
+```bash
+# 1) 本机把代码传上去（排除 .git）
+cd <本仓库根目录>
+tar czf - --exclude='./.git' --exclude='.DS_Store' . \
+  | ssh -i <SSH 密钥> ubuntu@<部署服务器> \
+    'mkdir -p /home/ubuntu/wallos-build && tar xzf - -C /home/ubuntu/wallos-build'
+
+# 2) 服务器上构建（线上是 arm64/aarch64，一律在服务器构建，保证与线上同架构）
+ssh … 'cd /home/ubuntu/wallos-build && sudo docker build -f Dockerfile.fork -t wallos-fork:<版本>-<序号> .'
+```
+
+### 发布
+
+```bash
+# 备份（SQLite 在线备份，别直接 cp 运行中的库）
+TS=$(date +%Y%m%d-%H%M%S); BK=/home/ubuntu/wallos-backup/$TS; mkdir -p "$BK"
+python3 -c "import sqlite3;s=sqlite3.connect('file:/home/ubuntu/wallos/db/wallos.db?mode=ro',uri=True);d=sqlite3.connect('$BK/wallos.db');s.backup(d)"
+sudo docker inspect wallos > "$BK/wallos-container.json"
+
+# 切换（旧容器改名保留，方便回滚）
+sudo docker stop wallos && sudo docker rename wallos wallos-old
+sudo docker run -d --name wallos --restart unless-stopped \
+  -p 127.0.0.1:8282:80 \
+  -v /home/ubuntu/wallos/db:/var/www/html/db \
+  -v /home/ubuntu/wallos/logos:/var/www/html/images/uploads/logos \
+  --label com.centurylinklabs.watchtower.enable=false \
+  wallos-fork:<版本>-<序号>
+```
+
+**回滚**：数据在 bind mount 上，重建容器即可恢复，所以回滚就是「用旧镜像名重建」——
+把上面的 `wallos-fork:<新版本>` 换成上一版镜像（如 `sudo docker rm -f wallos` 后重新 `docker run`）。
+旧服务器上还留着 fork/官方两套容器与数据，要整体退回就把 Cloudflare 的 DNS 记录指回
+旧服务器，再在那边 `docker start wallos`。
+
+**上线后必须确认**：容器 `healthy`、`https://<Wallos 域名>/login.php` 返回 200、
+`/var/log/cron/*.log` 继续在写、订阅与货币数量不变。
+
+### 四个坑
+
+1. **Watchtower 必须排除这个容器**，否则会被拉回官方镜像、自用功能全部冲掉（2026-10 已发生过一次）。
+   `--label com.centurylinklabs.watchtower.enable=false` 对**没有** `--label-enable` 的 Watchtower
+   同样生效（已查官方文档确认）。**每次 `docker run` 重建容器都要带上这个标签** ——
+   2026-10-08 迁到 arm 时就漏过一次，已补。
+   两个宿主机的 Watchtower 都是每天 **02:00 UTC**（北京 10:00）跑一次。
+2. **不要用 `bellamy/wallos:latest`**，那是官方镜像。
+3. 容器内的定时任务是**正常执行**的，改部署方式时别弄丢：Dockerfile 把仓库根目录的 `cronjobs`
+   复制到 `/etc/cron.d/cronjobs`，`startup.sh` 里的 `crontab -d -u root` 删的只是
+   `/etc/crontabs/` 那份**副本**（防重复执行），dcron 读的是 `/etc/cron.d/cronjobs`。
+   证据：容器内 `/var/log/cron/*.log` 每天都有记录（含 02:00 的汇率刷新）。
+   注意容器时区是 **UTC**：汇率刷新 = 北京 10:00、通知推送（sendnotifications 09:00）= 北京 17:00。
+4. **arm 的 `/home/ubuntu/wallos/` 里别放代码**。那个目录下还留着 5 月旧部署的残留
+   （一个 `docker-compose.yml` 指向官方镜像 + 把当时的 php/js 逐个 bind mount 进去，另有
+   16 个 5 月的 php/js/css 文件）。现在只有 `db/` 和 `logos/` 被使用，
+   **千万不要在那个目录里跑 `docker compose up -d`**，否则会起第二个容器抢 8282 端口、
+   并把应用降级回 5 月版本。（该目录当前无任何自动执行机制，仅手滑风险。）
+
+### 迁移文件那个坑（已核实不成立）
+
+曾经担心：线上 `migrations` 表里已有 `migrations/000047.php` 记录，
+而本 fork 把自用的 000047 改成了 `000060.php`，会导致上游的 `require_email_verified` 被跳过。
+
+**2026-10-08 实测**：线上 `oauth_settings.require_email_verified` 和
+`settings.default_auto_renew`/`default_notifications` **三个列都已存在**（官方 v5.8.3 镜像早就跑过），
+合并后保留的又是上游版 000047，`000060.php` 自带列存在性检查且幂等 —— **不需要删任何迁移记录**。
 
 ---
 

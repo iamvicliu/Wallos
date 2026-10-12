@@ -1,0 +1,41 @@
+# 本 fork 的部署镜像：在官方镜像之上叠加本仓库的应用文件。
+#
+# 为什么不直接用仓库根目录的 Dockerfile 全量构建：
+#   部署服务器只有 954MB 内存 / 2 核，官方 Dockerfile 要
+#   `docker-php-ext-install gd intl zip`，其中 intl(ICU) 编译很容易 OOM。
+#   而本 fork 只改了应用层文件（php / js / css / i18n / migrations /
+#   endpoints），既没新增 PHP 扩展，也没改构建步骤，所以叠一层结果等价。
+#
+# 构建（必须在服务器上跑，保证与线上同架构）：
+#   docker build -f Dockerfile.fork -t wallos-fork:<上游版本>-<序号> .
+#
+# 什么时候不能再用这个文件：将来上游改了 Dockerfile 的构建步骤
+# （新增 PHP 扩展、改基础镜像、改 ini 等），就必须改用全量构建。
+
+FROM bellamy/wallos:latest
+
+# 覆盖应用文件。原 Dockerfile 会把两个 nginx 配置从 webroot 删掉，这里照做。
+COPY --chown=www-data:www-data . /var/www/html/
+RUN rm -f /var/www/html/nginx.conf \
+          /var/www/html/nginx.default.conf \
+          /var/www/html/Dockerfile \
+          /var/www/html/Dockerfile.fork \
+          /var/www/html/docker-compose.yaml \
+    && chmod +x /var/www/html/startup.sh \
+    && mkdir -p /var/log/cron
+
+# 与官方 Dockerfile 一样重新安装 nginx 配置与定时任务。
+# 这一步不能省：万一以后合并上游时这些文件被改了，只叠应用文件是不会生效的。
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY nginx.default.conf /etc/nginx/http.d/default.conf
+COPY cronjobs /etc/cron.d/cronjobs
+RUN dos2unix /etc/cron.d/cronjobs \
+    && chmod 0644 /etc/cron.d/cronjobs \
+    && /usr/bin/crontab /etc/cron.d/cronjobs
+
+# 与官方镜像保持一致的启动方式与健康检查（显式写出，避免以后改动时漏掉）
+EXPOSE 80
+ENTRYPOINT ["dumb-init", "--"]
+HEALTHCHECK --interval=2m --timeout=2s --start-period=20s --start-interval=5s --retries=3 \
+    CMD ["curl", "-fsS", "http://127.0.0.1/health.php"]
+CMD ["/var/www/html/startup.sh"]
