@@ -31,13 +31,17 @@ function detailsFormatPrice(price, currencyId) {
   const lookups = window.subscriptionLookups;
   const currency = lookups.currencies[currencyId];
   const value = Number(price);
+  // Wallos language codes use underscores (zh_cn, pt_br), which Intl rejects
+  const locale = (window.lang || 'en').replace(/_/g, '-');
   if (currency && currency.code) {
     try {
-      return new Intl.NumberFormat(window.lang || 'en', { style: 'currency', currency: currency.code }).format(value);
+      return new Intl.NumberFormat(locale, { style: 'currency', currency: currency.code }).format(value);
     } catch (e) { /* unknown currency code, fall through */ }
   }
-  const symbol = currency ? (currency.symbol || currency.code || '') : '';
-  return `${symbol}${value.toFixed(2)}`;
+  // Symbols are stored as HTML entities (e.g. &yen;) and the result is set via textContent
+  const decoder = document.createElement('textarea');
+  decoder.innerHTML = currency ? (currency.symbol || currency.code || '') : '';
+  return `${decoder.value}${value.toFixed(2)}`;
 }
 
 function detailsFormatDate(dateString) {
