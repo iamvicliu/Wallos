@@ -195,6 +195,7 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
     $formatted_date = $formatter->format($next_payment_timestamp);
     $print[$id]['next_payment'] = $formatted_date;
     $print[$id]['auto_renew'] = $subscription['auto_renew'];
+    $print[$id]['notify'] = $subscription['notify'];
     $paymentIconFolder = (strpos($payment_methods[$paymentMethodId]['icon'], 'images/uploads/icons/') !== false) ? "" : "images/uploads/logos/";
     $print[$id]['payment_method_icon'] = $paymentIconFolder . $payment_methods[$paymentMethodId]['icon'];
     $print[$id]['payment_method_name'] = $payment_methods[$paymentMethodId]['name'];
