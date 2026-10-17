@@ -5,6 +5,7 @@ require_once 'includes/getdbkeys.php';
 require_once 'includes/logo_theme_variant.php';
 require_once 'includes/upcoming_payments.php';
 require_once 'includes/upcoming_cancellations.php';
+require_once 'includes/expiry_timeline.php';
 
 function formatPrice($price, $currencyCode, $currencies)
 {
@@ -95,6 +96,9 @@ $hasOverdueSubscriptions = !empty($overdueSubscriptions);
 // the statistics page, so both stay in step).
 $upcomingCancellations = get_upcoming_cancellations($db, $userId);
 $hasUpcomingCancellations = !empty($upcomingCancellations);
+
+// Every renewal in the next 30 days, grouped by date, for the expiry timeline.
+$expiryTimeline = get_expiry_timeline($db, $userId);
 
 require_once 'includes/stats_calculations.php';
 
@@ -239,6 +243,66 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
                 ?>
             </div>
         </div>
+
+        <?php if ($expiryTimeline['count'] > 0) {
+            $mainCurrencyCode = $currencies[$userData['main_currency']]['code'];
+            ?>
+            <div class="expiry-timeline">
+                <div class="expiry-timeline-header">
+                    <h2><?= translate('expiry_timeline', $i18n) ?></h2>
+                    <p class="expiry-timeline-summary">
+                        <?= translate('timeline_next_30_days', $i18n) ?> ·
+                        <?= $expiryTimeline['count'] ?> <?= translate('timeline_renewals', $i18n) ?> ·
+                        <strong><?= CurrencyFormatter::format($expiryTimeline['total'], $mainCurrencyCode) ?></strong>
+                    </p>
+                </div>
+                <ol class="expiry-timeline-list">
+                    <?php foreach ($expiryTimeline['days'] as $timelineDay) {
+                        if ($timelineDay['offset'] === 0) {
+                            $timelineLabel = translate('timeline_today', $i18n);
+                        } elseif ($timelineDay['offset'] === 1) {
+                            $timelineLabel = translate('timeline_tomorrow', $i18n);
+                        } else {
+                            $timelineLabel = sprintf(translate('timeline_in_n_days', $i18n), $timelineDay['offset']);
+                        }
+                        ?>
+                        <li class="expiry-timeline-day<?= $timelineDay['offset'] <= 3 ? ' soon' : '' ?>">
+                            <div class="expiry-timeline-date">
+                                <span class="expiry-timeline-label"><?= $timelineLabel ?></span>
+                                <span class="expiry-timeline-full-date"><?= formatDate($timelineDay['date'], $lang) ?></span>
+                                <span class="expiry-timeline-day-total"><?= CurrencyFormatter::format($timelineDay['total'], $mainCurrencyCode) ?></span>
+                            </div>
+                            <div class="expiry-timeline-items">
+                                <?php foreach ($timelineDay['items'] as $subscription) {
+                                    $subscriptionName = htmlspecialchars($subscription['name']);
+                                    $isAutoRenew = (bool) $subscription['auto_renew'];
+                                    ?>
+                                    <div class="expiry-timeline-item<?= $isAutoRenew ? '' : ' manual' ?>" onClick="showSubscriptionDetails(event, <?= $subscription['id'] ?>)" data-id="<?= $subscription['id'] ?>">
+                                        <span class="expiry-timeline-icon <?= $isAutoRenew ? 'auto' : 'manual' ?>"
+                                            title="<?= $isAutoRenew ? translate('automatically_renews', $i18n) : translate('manual_renewal', $i18n) ?>">
+                                            <?php if ($isAutoRenew) {
+                                                include "images/siteicons/svg/automatic.php";
+                                            } else {
+                                                include "images/siteicons/svg/manual.php";
+                                            } ?>
+                                        </span>
+                                        <?php
+                                        if (!empty($subscription['logo'])) {
+                                            $subscriptionLogoSrc = "images/uploads/logos/" . $subscription['logo'];
+                                            $subscriptionLogoVariantSrc = !empty($subscription['logo_variant']) ? "images/uploads/logos/" . $subscription['logo_variant'] : null;
+                                            echo renderThemedLogoImg($subscriptionLogoSrc, $subscriptionLogoVariantSrc, $subscription['logo_text_color'] ?? null, 'expiry-timeline-logo', 'alt=""');
+                                        }
+                                        ?>
+                                        <span class="expiry-timeline-name"><?= $subscriptionName ?></span>
+                                        <span class="expiry-timeline-price"><?= formatPrice($subscription['price'], $currencies[$subscription['currency_id']]['code'], $currencies) ?></span>
+                                    </div>
+                                <?php } ?>
+                            </div>
+                        </li>
+                    <?php } ?>
+                </ol>
+            </div>
+        <?php } ?>
 
         <?php if ($hasUpcomingCancellations) { ?>
             <div class="cancellation-subscriptions">

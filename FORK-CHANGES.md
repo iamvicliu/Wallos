@@ -175,6 +175,36 @@ renewal_type, automatically_renews, manual_renewal # 日历续费图标
 DELETE FROM migrations WHERE migration = 'migrations/000047.php';
 ```
 
+### 8. 修复：订阅详情弹窗价格显示 `&yen;1.00`（上游 bug，2026-10-17）
+
+`scripts/subscription-details.js` 的 `detailsFormatPrice`：Wallos 语言代码是 `zh_cn` 这种下划线写法，
+`Intl.NumberFormat` 不认，抛错后回退到库里存的 HTML 实体符号（`&yen;`），又用 `textContent` 输出，
+所以页面上原样显示 `&yen;`。改为把 `_` 换成 `-` 再交给 `Intl`，回退分支先解码实体。
+适合单独提上游 PR。
+
+### 9. 首页「到期时间线」（2026-10-17）
+
+首页「即将到期的付款」下面新增一块，把**未来 30 天**内每一次续费按日期排成竖向时间线：
+
+- 每天标「今天 / 明天 / N 天后」+ 日期 + 当天合计（折算成主货币）；标题右侧是 30 天总笔数与总金额。
+- 周期订阅会展开成窗口内的**每一次**续费（周付的会出现四五次）；日期按 `next_payment + n×周期` 计算，
+  不链式累加，月底日期不会越滚越偏；早于今天的跳过，过了取消日期的停止。
+- 一次性买断不算（没有续费）；手动续费且已逾期的不往后推（「逾期续订」区块已经显示了）。
+- 续费图标与日历一致（自动=循环箭头，手动=手形），手动续费的条目左边加橙色竖条；点条目打开详情弹窗。
+
+涉及文件：`includes/expiry_timeline.php`（新文件，`get_expiry_timeline()`）、`index.php`
+（require + 区块）、`styles/styles.css`（末尾 `.expiry-timeline*`）、i18n（见下）。
+新增 i18n 键只加了 `en` / `zh_cn` / `zh_tw`，其他语言由 `translate()` 回退到英文：
+
+```
+expiry_timeline, timeline_next_30_days, timeline_renewals,
+timeline_today, timeline_tomorrow, timeline_in_n_days   # %d 天后
+```
+
+**版本号**：`includes/version.php` 改成了 `v5.8.3.2`（只为让 Service Worker 换缓存；
+`v5.8.3.1` = 第 8 项价格修复 / 镜像 `5.8.3-2`，`v5.8.3.2` = 第 9 项时间线 / 镜像 `5.8.3-3`）。
+合并上游新版本时这一行必然冲突，直接取上游的版本号即可。
+
 ---
 
 ## 四、上游独有行的正常范围
@@ -239,13 +269,13 @@ sudo docker run -d --name wallos --restart unless-stopped \
 
 **回滚**：数据在 bind mount 上，重建容器即可恢复，所以回滚就是「用旧镜像名重建」——
 把上面的 `wallos-fork:<新版本>` 换成上一版镜像（如 `sudo docker rm -f wallos` 后重新 `docker run`）。
-旧服务器上还留着 fork/官方两套容器与数据，要整体退回就把 Cloudflare 的 DNS 记录指回
-旧服务器，再在那边 `docker start wallos`。
+数据坏了就用 `wallos-backup/<时间戳>/wallos.db` 恢复。旧服务器上的容器与数据已于 2026-10-17 删除，
+不再有「整体退回旧服务器」这条路。
 
 **上线后必须确认**：容器 `healthy`、`https://<Wallos 域名>/login.php` 返回 200、
-`/var/log/cron/*.log` 继续在写、订阅与货币数量不变。
+`/var/log/cron/*.log` 继续在写、订阅与货币数量不变；改过 JS/CSS 的话还要做第 5 个坑里的清缓存。
 
-### 四个坑
+### 五个坑
 
 1. **Watchtower 必须排除这个容器**，否则会被拉回官方镜像、自用功能全部冲掉（2026-10 已发生过一次）。
    `--label com.centurylinklabs.watchtower.enable=false` 对**没有** `--label-enable` 的 Watchtower
@@ -258,11 +288,19 @@ sudo docker run -d --name wallos --restart unless-stopped \
    `/etc/crontabs/` 那份**副本**（防重复执行），dcron 读的是 `/etc/cron.d/cronjobs`。
    证据：容器内 `/var/log/cron/*.log` 每天都有记录（含 02:00 的汇率刷新）。
    注意容器时区是 **UTC**：汇率刷新 = 北京 10:00、通知推送（sendnotifications 09:00）= 北京 17:00。
-4. **arm 的 `/home/ubuntu/wallos/` 里别放代码**。那个目录下还留着 5 月旧部署的残留
-   （一个 `docker-compose.yml` 指向官方镜像 + 把当时的 php/js 逐个 bind mount 进去，另有
-   16 个 5 月的 php/js/css 文件）。现在只有 `db/` 和 `logos/` 被使用，
-   **千万不要在那个目录里跑 `docker compose up -d`**，否则会起第二个容器抢 8282 端口、
-   并把应用降级回 5 月版本。（该目录当前无任何自动执行机制，仅手滑风险。）
+4. **arm 的 `/home/ubuntu/wallos/` 里只放 `db/` 和 `logos/`**，别放代码、别放 compose 文件。
+   5 月旧部署留下的 `docker-compose.yml`（指向官方镜像）和 16 个 php/js/css 残留已于 2026-10-08 清理；
+   以后也不要在这个目录跑 `docker compose up -d`，否则会起第二个容器抢 8282 端口并降级应用。
+5. **改了 JS/CSS 必须改版本号，并清 Cloudflare 缓存**。
+   `service-worker.php` 的静态缓存名跟 `includes/version.php` 走，不改版本号浏览器永远用旧 JS。
+   但光改版本号还不够：Service Worker 预缓存的是**不带查询参数**的 URL（如 `scripts/subscription-details.js`），
+   Cloudflare 会把这个 URL 缓存一段时间（2026-10-17 实测 `cf-cache-status: HIT`），
+   新 Service Worker 安装时就会拿到 Cloudflare 里的旧文件，并以新版本号存进缓存。
+   所以上线后要按 URL 清掉改过的静态文件，**带版本号和不带版本号的两个 URL 都要清**
+   （2026-10-17 第二次上线时只清了不带参数的，浏览器拿 `styles.css?v5.8.3.2` 仍命中旧文件）：
+   `POST /zones/<zone>/purge_cache`，body `{"files":["https://<Wallos 域名>/scripts/xxx.js","https://<Wallos 域名>/scripts/xxx.js?<版本号>"]}`。
+   清完用浏览器 `fetch(url,{cache:'reload'})` 检查内容里有没有新代码，别只看 purge 返回 success。
+   已经装了坏缓存的浏览器，要等下一个版本号才会自愈，或者手动清站点数据。
 
 ### 迁移文件那个坑（已核实不成立）
 
