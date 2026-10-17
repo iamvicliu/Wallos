@@ -138,6 +138,10 @@ Git 会把整个文件判成冲突。**不要手工逐块解决。**
 | `includes/stats_calculations.php` | 新增 `$monthlyForecastDataPoints` / `$showMonthlyForecastGraph`（文件末尾的 12 个月分桶计算） |
 | `stats.php` | 预测图卡片并入上游的「趋势与预测」区块；`$showMonthlyForecastGraph` 要同时加进 `$showAnyGraph`、`$showTrendsSection` 和 graphs 容器的守卫；`loadLineGraph("monthlyForecastChart", ...)` |
 
+**2026-10-17 修复本月少算**：预测从本月 1 号算起，但本月已经扣过款的订阅 `next_payment` 已跳到下个周期，
+1 号到今天之间付掉的钱原来不计入本月。现在每次扣款按 `next_payment + n×周期`（n 可为负）计算，
+往回补上本月已付的几笔（不早于 `start_date`）；起点改为本月 1 号零点（原来带着当前时分秒，1 号那笔会漏）。
+
 > 上游 v5.8.3 已把统计页迁到 ApexCharts：容器用 `<div id="...">` 而不是 `<canvas>`。
 > 合并时不要迁回 canvas 写法。
 
@@ -182,27 +186,36 @@ DELETE FROM migrations WHERE migration = 'migrations/000047.php';
 所以页面上原样显示 `&yen;`。改为把 `_` 换成 `-` 再交给 `Intl`，回退分支先解码实体。
 适合单独提上游 PR。
 
-### 9. 首页「到期时间线」（2026-10-17）
+### 9. 首页「即将到期的付款」日期范围（2026-10-17）
 
-首页「即将到期的付款」下面新增一块，把**未来 30 天**内每一次续费按日期排成竖向时间线：
+设置页「要显示的即将到期付款」下面新增「即将到期付款的日期范围」：关闭 / 未来 7 / 14 / 30 / 60 / 90 天。
 
-- 每天标「今天 / 明天 / N 天后」+ 日期 + 当天合计（折算成主货币）；标题右侧是 30 天总笔数与总金额。
-- 周期订阅会展开成窗口内的**每一次**续费（周付的会出现四五次）；日期按 `next_payment + n×周期` 计算，
-  不链式累加，月底日期不会越滚越偏；早于今天的跳过，过了取消日期的停止。
-- 一次性买断不算（没有续费）；手动续费且已逾期的不往后推（「逾期续订」区块已经显示了）。
-- 续费图标与日历一致（自动=循环箭头，手动=手形），手动续费的条目左边加橙色竖条；点条目打开详情弹窗。
+- 关闭（默认，值 0）：和上游一样，按条数显示前 3/5/10/20 个。
+- 选了天数：显示这段时间内到期的**全部**订阅，条数不再生效（设置页的条数下拉框随之变灰）。
+  每个订阅仍只出现一次（和上游列表一致），一次性买断照旧不算。
 
-涉及文件：`includes/expiry_timeline.php`（新文件，`get_expiry_timeline()`）、`index.php`
-（require + 区块）、`styles/styles.css`（末尾 `.expiry-timeline*`）、i18n（见下）。
+| 文件 | 改动 |
+|---|---|
+| `migrations/000061.php` | 加 `settings.upcoming_payments_days INTEGER DEFAULT 0`（幂等）。⚠️ 上游以后也可能用到 000061，合并时按第 7 项的处理办法改名 |
+| `includes/upcoming_payments.php` | `UPCOMING_PAYMENTS_DAYS`、`parse_/normalize_upcoming_payments_days()`；`get_upcoming_payments()` 加第 4 个参数 `$days` |
+| `index.php` | 把 `upcoming_payments_days` 传给 `get_upcoming_payments()` |
+| `settings.php` / `scripts/settings.js` | 日期范围下拉框、`setUpcomingPaymentsDays()` |
+| `endpoints/settings/upcoming_payments_days.php` | 新文件，保存设置 |
+| `api/settings/set_settings.php` / `get_settings.php` | API 支持 `upcoming_payments_days` 参数 |
+| `tests/cases/subscription_index_test.php` | 迁移、取值校验、按范围取数 3 个测试 |
+
 新增 i18n 键只加了 `en` / `zh_cn` / `zh_tw`，其他语言由 `translate()` 回退到英文：
 
 ```
-expiry_timeline, timeline_next_30_days, timeline_renewals,
-timeline_today, timeline_tomorrow, timeline_in_n_days   # %d 天后
+upcoming_payments_range, upcoming_payments_range_off, upcoming_payments_next_days   # 未来 %d 天
 ```
 
-**版本号**：`includes/version.php` 改成了 `v5.8.3.2`（只为让 Service Worker 换缓存；
-`v5.8.3.1` = 第 8 项价格修复 / 镜像 `5.8.3-2`，`v5.8.3.2` = 第 9 项时间线 / 镜像 `5.8.3-3`）。
+> 曾经的「到期时间线」（首页单独一块，未来 30 天每次续费按日期排开，提交 70beefb，镜像 `5.8.3-3`）
+> 2026-10-17 按用户要求移除，改成上面这个设置。
+
+**版本号**：`includes/version.php` 改成了 `v5.8.3.3`（只为让 Service Worker 换缓存；
+`v5.8.3.1` = 第 8 项价格修复 / 镜像 `5.8.3-2`，`v5.8.3.2` = 已移除的到期时间线 / 镜像 `5.8.3-3`，
+`v5.8.3.3` = 第 9 项日期范围 + 第 5 项预测图本月修复 / 镜像 `5.8.3-4`）。
 合并上游新版本时这一行必然冲突，直接取上游的版本号即可。
 
 ---

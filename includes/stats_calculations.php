@@ -382,14 +382,12 @@ $showTotalMonthlyCostGraph = count($totalMonthlyCostDataPoints) > 1;
 
 // Monthly payment forecast for next 12 months
 $forecastMonths = 12;
-$forecastStart = new DateTime('first day of this month');
-$forecastEnd = clone $forecastStart;
-$forecastEnd->modify('+12 months');
+$forecastStart = new DateTimeImmutable('first day of this month midnight');
+$forecastEnd = $forecastStart->modify('+12 months');
 
 $monthlyForecastBuckets = [];
 for ($i = 0; $i < $forecastMonths; $i++) {
-    $d = clone $forecastStart;
-    $d->modify("+{$i} months");
+    $d = $forecastStart->modify("+{$i} months");
     $monthlyForecastBuckets[$i] = ['label' => $d->format('Y-m'), 'cost' => 0.0];
 }
 
@@ -400,35 +398,40 @@ if (isset($subscriptions)) {
         $cycle = (int)$subscription['cycle'];
         $convertedPrice = getPriceConverted($subscription['price'], $subscription['currency_id'], $db, $userId);
 
-        $payDate = DateTime::createFromFormat('Y-m-d', trim($subscription['next_payment']));
-        if (!$payDate) continue;
+        $base = DateTimeImmutable::createFromFormat('!Y-m-d', trim($subscription['next_payment']));
+        if (!$base) continue;
+        $unit = [1 => 'days', 2 => 'weeks', 3 => 'months', 4 => 'years'][$cycle] ?? null;
+        if ($unit === null) continue;
+        $startDate = !empty($subscription['start_date'])
+            ? DateTimeImmutable::createFromFormat('!Y-m-d', substr(trim($subscription['start_date']), 0, 10))
+            : false;
+        // Occurrence n of the plan, counted from the stored next payment so a
+        // renewal on the 31st does not drift; n can be negative.
+        $occurrence = fn($n) => $base->modify(($n >= 0 ? '+' : '') . ($n * $frequency) . ' ' . $unit);
 
-        // Advance past dates to next upcoming occurrence
+        // The next payment has already moved past anything paid earlier this
+        // month, so step back to count those too, but not before the start date.
+        // A next payment before the window (an overdue manual renewal) is
+        // advanced to its first occurrence inside it instead.
+        $n = 0;
         $guard = 0;
-        while ($payDate < $forecastStart && $guard++ < 500) {
-            switch ($cycle) {
-                case 1: $payDate->modify("+{$frequency} days"); break;
-                case 2: $payDate->modify("+{$frequency} weeks"); break;
-                case 3: $payDate->modify("+{$frequency} months"); break;
-                case 4: $payDate->modify("+{$frequency} years"); break;
-                default: break 2;
+        if ($base < $forecastStart) {
+            while ($occurrence($n) < $forecastStart && $guard++ < 500) $n++;
+        } else {
+            while ($guard++ < 500) {
+                $previous = $occurrence($n - 1);
+                if ($previous < $forecastStart || ($startDate && $previous < $startDate)) break;
+                $n--;
             }
         }
 
         // Walk forward and assign payments to month buckets
         $guard = 0;
-        while ($payDate < $forecastEnd && $guard++ < 500) {
+        for ($payDate = $occurrence($n); $payDate < $forecastEnd && $guard++ < 500; $payDate = $occurrence(++$n)) {
             $monthIndex = ($payDate->format('Y') - $forecastStart->format('Y')) * 12
                         + ((int)$payDate->format('n') - (int)$forecastStart->format('n'));
             if ($monthIndex >= 0 && $monthIndex < $forecastMonths) {
                 $monthlyForecastBuckets[$monthIndex]['cost'] += $convertedPrice;
-            }
-            switch ($cycle) {
-                case 1: $payDate->modify("+{$frequency} days"); break;
-                case 2: $payDate->modify("+{$frequency} weeks"); break;
-                case 3: $payDate->modify("+{$frequency} months"); break;
-                case 4: $payDate->modify("+{$frequency} years"); break;
-                default: break 2;
             }
         }
     }
