@@ -2,6 +2,7 @@
 error_reporting(E_ERROR | E_PARSE);
 require_once '../../includes/connect_endpoint.php';
 require_once '../../includes/validate_endpoint.php';
+require_once '../../includes/logo_cleanup.php';
 
 $data = json_decode(file_get_contents('php://input'), true);
 
@@ -100,10 +101,32 @@ switch ($action) {
         break;
 
     case 'delete':
+        // Same clean up as endpoints/subscription/delete.php, for each subscription.
+        $logos = [];
+        $stmt = $db->prepare("SELECT logo, logo_variant FROM subscriptions WHERE id IN ($idList) AND user_id = :userId");
+        $stmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
+        $result = $stmt->execute();
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            $logos[] = $row['logo'];
+            $logos[] = $row['logo_variant'];
+        }
+
         $sql = "DELETE FROM subscriptions WHERE id IN ($idList) AND user_id = :userId";
         $stmt = $db->prepare($sql);
         $stmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
+        if (!$stmt->execute()) {
+            echo json_encode(['success' => false, 'message' => 'Delete failed']);
+            exit;
+        }
+
+        $sql = "UPDATE subscriptions SET replacement_subscription_id = NULL WHERE replacement_subscription_id IN ($idList) AND user_id = :userId";
+        $stmt = $db->prepare($sql);
+        $stmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
         $stmt->execute();
+
+        foreach (array_unique($logos) as $logo) {
+            deleteLogoFileIfUnused($db, $logo, '../../images/uploads/logos/');
+        }
         break;
 
     default:
