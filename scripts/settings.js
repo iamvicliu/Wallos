@@ -1086,8 +1086,6 @@ function setUpcomingPaymentsDays() {
   const upcomingPaymentsDays = document.querySelector("#upcomingpaymentsdays");
   const value = Number(upcomingPaymentsDays.value);
 
-  // A date range shows every payment due within it, so the count no longer applies.
-  document.querySelector("#upcomingpaymentslimit").disabled = value > 0;
   storeSettingsOnDB('upcoming_payments_days', value);
 }
 

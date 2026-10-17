@@ -51,7 +51,6 @@ $i18n = [
     "upcoming_cancellations" => "即將取消",
     "upcoming_payments_to_show" => "要顯示的即將到期付款",
     "upcoming_payments_range" => "即將到期付款的日期範圍",
-    "upcoming_payments_range_off" => "關閉（按上面的筆數）",
     "upcoming_payments_next_days" => "未來 %d 天",
     "no_upcoming_payments" => "您沒有任何即將到期的付款",
     "overdue_renewals" => "逾期續訂",
@@ -158,8 +157,6 @@ $i18n = [
     "household_split" => "家庭成員分析",
     "payment_method_split" => "付款方式分析",
     "total_cost_trend" => "總費用趨勢",
-    "monthly_payment_forecast" => "Monthly Payment Forecast",
-    "next_12_months" => "Next 12 Months",
     "cost_vs_budget" => "費用與預算比較",
     // 關於頁面
     "about_and_credits" => "關於和致謝",

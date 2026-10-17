@@ -131,16 +131,12 @@ Git 会把整个文件判成冲突。**不要手工逐块解决。**
 > （`const autoRenew = document.querySelector("#auto_renew"); autoRenew.checked = true;` 等），
 > 改为读上面的 settings。合并时看到「上游多了这 4 行」是正常的，**不要加回来**。
 
-### 5. 统计页「未来 12 个月支付预测」图
+### 5. ~~统计页「未来 12 个月支付预测」图~~（2026-10-17 已移除）
 
-| 文件 | 改动 |
-|---|---|
-| `includes/stats_calculations.php` | 新增 `$monthlyForecastDataPoints` / `$showMonthlyForecastGraph`（文件末尾的 12 个月分桶计算） |
-| `stats.php` | 预测图卡片并入上游的「趋势与预测」区块；`$showMonthlyForecastGraph` 要同时加进 `$showAnyGraph`、`$showTrendsSection` 和 graphs 容器的守卫；`loadLineGraph("monthlyForecastChart", ...)` |
-
-**2026-10-17 修复本月少算**：预测从本月 1 号算起，但本月已经扣过款的订阅 `next_payment` 已跳到下个周期，
-1 号到今天之间付掉的钱原来不计入本月。现在每次扣款按 `next_payment + n×周期`（n 可为负）计算，
-往回补上本月已付的几笔（不早于 `start_date`）；起点改为本月 1 号零点（原来带着当前时分秒，1 号那笔会漏）。
+上游 v5.8.3 自带「预计支出（未来12个月）」柱状图（`projectionChart`，从下月起算），和本 fork 的预测图重复，
+按用户要求删掉了本 fork 的版本：`stats.php`、`includes/stats_calculations.php` 恢复为上游原样，
+i18n 键 `monthly_payment_forecast` / `next_12_months` 一并删除。
+（被删版本还有个 bug：`next_payment` 在多年以后的预付订阅，往回推算时会被错算进未来 12 个月。）
 
 > 上游 v5.8.3 已把统计页迁到 ApexCharts：容器用 `<div id="...">` 而不是 `<canvas>`。
 > 合并时不要迁回 canvas 写法。
@@ -150,7 +146,6 @@ Git 会把整个文件判成冲突。**不要手工逐块解决。**
 `includes/i18n/*.php`（26 个语言）+ `scripts/i18n/en.js` + `scripts/i18n/zh_cn.js`：
 
 ```
-monthly_payment_forecast, next_12_months          # 预测图
 new_subscription_defaults, default_auto_renew, default_notifications   # 默认值
 bulk_actions, select_all, selected, select_action,
 disable_notifications, set_notification_timing, set_category,
@@ -188,18 +183,21 @@ DELETE FROM migrations WHERE migration = 'migrations/000047.php';
 
 ### 9. 首页「即将到期的付款」日期范围（2026-10-17）
 
-设置页「要显示的即将到期付款」下面新增「即将到期付款的日期范围」：关闭 / 未来 7 / 14 / 30 / 60 / 90 天。
+首页「即将到期的付款」**只按日期**显示：设置页把上游的「要显示的即将到期付款」（条数 3/5/10/20）下拉框
+换成「即将到期付款的日期范围」：未来 7 / 14 / 30 / 60 / 90 天，显示这段时间内到期的**全部**订阅。
+没设过（库里是 0）时按默认 30 天（`UPCOMING_PAYMENTS_DEFAULT_DAYS`）。
+每个订阅仍只出现一次（和上游列表一致），一次性买断照旧不算。
 
-- 关闭（默认，值 0）：和上游一样，按条数显示前 3/5/10/20 个。
-- 选了天数：显示这段时间内到期的**全部**订阅，条数不再生效（设置页的条数下拉框随之变灰）。
-  每个订阅仍只出现一次（和上游列表一致），一次性买断照旧不算。
+上游的条数字段 `upcoming_payments_limit`、它的端点/API 和 `setUpcomingPaymentsLimit()` 都原样保留没删
+（只是设置页不再显示），`get_upcoming_payments($db, $userId, $limit, $days = 0)` 在 `$days = 0` 时
+仍是上游的按条数行为，上游测试不用改。
 
 | 文件 | 改动 |
 |---|---|
 | `migrations/000061.php` | 加 `settings.upcoming_payments_days INTEGER DEFAULT 0`（幂等）。⚠️ 上游以后也可能用到 000061，合并时按第 7 项的处理办法改名 |
 | `includes/upcoming_payments.php` | `UPCOMING_PAYMENTS_DAYS`、`parse_/normalize_upcoming_payments_days()`；`get_upcoming_payments()` 加第 4 个参数 `$days` |
-| `index.php` | 把 `upcoming_payments_days` 传给 `get_upcoming_payments()` |
-| `settings.php` / `scripts/settings.js` | 日期范围下拉框、`setUpcomingPaymentsDays()` |
+| `index.php` | 把 `upcoming_payments_days`（0 时取默认 30）传给 `get_upcoming_payments()` |
+| `settings.php` / `scripts/settings.js` | 删掉条数下拉框，换成日期范围下拉框、`setUpcomingPaymentsDays()` |
 | `endpoints/settings/upcoming_payments_days.php` | 新文件，保存设置 |
 | `api/settings/set_settings.php` / `get_settings.php` | API 支持 `upcoming_payments_days` 参数 |
 | `tests/cases/subscription_index_test.php` | 迁移、取值校验、按范围取数 3 个测试 |
@@ -207,15 +205,16 @@ DELETE FROM migrations WHERE migration = 'migrations/000047.php';
 新增 i18n 键只加了 `en` / `zh_cn` / `zh_tw`，其他语言由 `translate()` 回退到英文：
 
 ```
-upcoming_payments_range, upcoming_payments_range_off, upcoming_payments_next_days   # 未来 %d 天
+upcoming_payments_range, upcoming_payments_next_days   # 未来 %d 天
 ```
 
 > 曾经的「到期时间线」（首页单独一块，未来 30 天每次续费按日期排开，提交 70beefb，镜像 `5.8.3-3`）
 > 2026-10-17 按用户要求移除，改成上面这个设置。
 
-**版本号**：`includes/version.php` 改成了 `v5.8.3.3`（只为让 Service Worker 换缓存；
+**版本号**：`includes/version.php` 改成了 `v5.8.3.4`（只为让 Service Worker 换缓存；
 `v5.8.3.1` = 第 8 项价格修复 / 镜像 `5.8.3-2`，`v5.8.3.2` = 已移除的到期时间线 / 镜像 `5.8.3-3`，
-`v5.8.3.3` = 第 9 项日期范围 + 第 5 项预测图本月修复 / 镜像 `5.8.3-4`）。
+`v5.8.3.3` = 日期范围（可关闭、保留条数）+ 预测图本月修复 / 镜像 `5.8.3-4`，
+`v5.8.3.4` = 只按日期、移除本 fork 预测图 / 镜像 `5.8.3-5`）。
 合并上游新版本时这一行必然冲突，直接取上游的版本号即可。
 
 ---
@@ -228,8 +227,8 @@ upcoming_payments_range, upcoming_payments_range_off, upcoming_payments_next_day
 | 文件 | 行数 | 原因 |
 |---|---|---|
 | `calendar.php` | 2 | 上游的 `.calendar-event` 标签，被我们的日历格子替换 |
-| `stats.php` | 3 | 上游的图表守卫，被我们加上 `$showMonthlyForecastGraph` |
 | `scripts/subscriptions.js` | 4 | 上游硬编码的新订阅默认值，我们改成读 settings |
+| `settings.php` | 9 | 上游的「要显示的即将到期付款」条数下拉框，我们换成了日期范围（第 9 项） |
 | `scripts/i18n/en.js` | 1 | `// Calendar ` 行尾空格（本 fork 原本就没有） |
 | `includes/i18n/ko.php` | 1 | 文件末尾换行差异 |
 

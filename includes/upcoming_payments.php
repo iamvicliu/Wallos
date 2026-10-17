@@ -3,6 +3,8 @@
 const UPCOMING_PAYMENTS_LIMITS = [3, 5, 10, 20];
 // 0 keeps the count-based list; any other value shows every payment due within that many days.
 const UPCOMING_PAYMENTS_DAYS = [0, 7, 14, 30, 60, 90];
+// The dashboard always lists by date; 0 (never set) falls back to this range.
+const UPCOMING_PAYMENTS_DEFAULT_DAYS = 30;
 
 /**
  * Parse a dashboard limit and return null for unsupported values.
