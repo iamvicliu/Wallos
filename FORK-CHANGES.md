@@ -29,7 +29,9 @@ v5.10.0
  ├─ feat: toggle notifications from the subscription list ← 上游 PR #1272
  ├─ feat: let users choose the defaults for new subscriptions ← 上游 PR #1273
  ├─ fix: restore CRLF line endings                        ← 修复我解决冲突时把两个文件转成 LF 的问题
- └─ chore: fork-only changes                              ← 只属于本 fork 的东西（见第三节）
+ ├─ chore: fork-only changes                              ← 只属于本 fork 的东西（见第三节）
+ ├─ docs: 上线记录
+ └─ fix(pwa): don't pair a newer page with the old worker's cached assets ← 上游 PR #1279（同时把版本升到 v5.10.0.2）
 ```
 
 旧 fork 的其他功能都已经被上游收了，直接用上游的：
@@ -131,6 +133,7 @@ v5.10.0 的上游自己用了 000060（`subscription_payers` 表）和 000061（
 | [#1269](https://github.com/ellite/Wallos/pull/1269) | 首页「即将到期的付款」可按日期范围显示（7/14/30/60/90 天），设置 + API + 测试 | 900001 |
 | [#1272](https://github.com/ellite/Wallos/pull/1272) | 订阅列表每条右侧一个铃铛，直接开关通知（`endpoints/subscription/togglenotify.php`，`get.php` 返回 `notify`） | — |
 | [#1273](https://github.com/ellite/Wallos/pull/1273) | 设置里选新订阅的默认自动续费 / 默认通知 | 900002 |
+| [#1279](https://github.com/ellite/Wallos/pull/1279) | Service Worker：页面请求的 `?版本号` 和 worker 自己的版本不一致时走网络，避免升级后第一次加载「新页面 + 旧 CSS/JS」 | — |
 
 PR 分支里的迁移号已于 2026-10-18 改成上游下一个空号：#1269 = **000062**、#1273 = **000063**（fork 里对应 900001 / 900002，测试文件 require 的也是 9000xx）。
 上游合并后，fork 下次起分支时**不要**再带 000062/000063：线上已经记了 900001/900002，两边都是幂等加列，重复跑无害，但没必要。
@@ -144,14 +147,14 @@ PR 分支里的迁移号已于 2026-10-18 改成上游下一个空号：#1269 = 
 | `index.php` | 首页**只按日期**：`upcoming_payments_days` 为 0（没设过）时用 30 天 |
 | `settings.php` | 删掉上游的条数下拉框（3/5/10/20）；日期范围下拉框去掉「关闭」项 |
 | `scripts/settings.js` | 删掉日期范围切换时禁用条数下拉框的两行 |
-| `includes/version.php` | `v5.10.0.1`（只为让 Service Worker 换缓存） |
+| `includes/version.php` | `v5.10.0.2`（只为让 Service Worker 换缓存） |
 | `.github/workflows/build-release.yaml` | `release` job 加 `if: github.repository == 'ellite/Wallos'`，fork 没有发布凭据 |
 | `Dockerfile.fork` | 在官方镜像上叠应用层的部署镜像（见第五节） |
 | `FORK-CHANGES.md` | 本文件 |
 
 上游的 `upcoming_payments_limit` 字段、端点、API 和 `setUpcomingPaymentsLimit()` 都保留，只是设置页不显示。
 
-**版本号**：`v5.10.0.1` = 镜像 `5.10.0-1`。下次跟上游时直接取上游版本号再加 `.1`。
+**版本号**：`v5.10.0.2` = 镜像 `5.10.0-2`。下次跟上游时直接取上游版本号再加 `.1`。
 
 ---
 
@@ -250,6 +253,10 @@ sudo docker run -d --name wallos --restart unless-stopped \
    `POST /zones/<zone>/purge_cache`，body `{"files":["https://<Wallos 域名>/scripts/xxx.js","https://<Wallos 域名>/scripts/xxx.js?<版本号>"]}`。
    清完用浏览器 `fetch(url,{cache:'reload'})` 检查内容里有没有新代码，别只看 purge 返回 success。
    已经装了坏缓存的浏览器，要等下一个版本号才会自愈，或者手动清站点数据。
+   另一个现象（2026-10-18 实测）：升级后**第一次**打开页面，新 worker 还在预缓存（约 150 个文件，要一阵子），
+   这期间是**旧 worker** 在服务，它用 `ignoreSearch` 缓存优先，把旧版 CSS 配给新页面
+   （表现：两个批量按钮、卡片没有勾选框）。刷新即恢复。fork 从 v5.10.0.2 起带修复（上游 PR #1279），
+   请求版本号与 worker 版本不一致就走网络；因为修复在 worker 里，**下一次升级起**才生效。
 
 
 ---
@@ -258,3 +265,7 @@ sudo docker run -d --name wallos --restart unless-stopped \
 
 - 2026-10-18（北京时间 14:33）：生产换成 `wallos-fork:5.10.0-1`，迁移 900000–900002 执行成功，两张关联表各回填 83 行；
   订阅 83、货币 10 不变；备份 `wallos-backup/20261018-143328`；回滚容器 `wallos-old` = `5.8.3-6`。
+- 2026-10-18（北京时间 16:35）：生产换成 `wallos-fork:5.10.0-2`（只改 `service-worker.php` + 版本号，无迁移）；
+  订阅 83、货币 10 不变，容器 healthy，登录页 200；浏览器实测版本不一致走网络、一致走缓存，旧静态缓存被清掉。
+  只改 PHP，没清 Cloudflare。备份 `wallos-backup/20261018-083524`（目录名为服务器 UTC 时间）；
+  上一版容器改名保留为 `wallos-5.10.0-1`（停止），`wallos-old` = `5.8.3-6` 也仍保留。
