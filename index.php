@@ -79,7 +79,7 @@ $upcomingSubscriptions = get_upcoming_payments(
     $db,
     $userId,
     $settings['upcoming_payments_limit'] ?? 3,
-    $settings['upcoming_payments_days'] ?? 0
+    normalize_upcoming_payments_days($settings['upcoming_payments_days'] ?? 0) ?: UPCOMING_PAYMENTS_DEFAULT_DAYS
 );
 
 // Fetch enabled subscriptions with manual renewal that are overdue

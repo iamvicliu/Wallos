@@ -21,6 +21,8 @@ env:
 
 jobs:
   release:
+    # 发布到上游的 Docker Hub 与 ghcr.io/ellite/wallos，fork 没有这些凭据，只在上游仓库运行；fork 的镜像在部署服务器上自行构建
+    if: github.repository == 'ellite/Wallos'
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
